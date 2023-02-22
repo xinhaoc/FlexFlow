@@ -2412,17 +2412,12 @@ class PyTorchModel():
         is_hf_model=False,
         input_names=None,
         batch_size=1,
-        seq_length=None,
     ):
         assert isinstance(model, torch.nn.Module)
         self.model = model
         self.is_hf_model = is_hf_model
         self.input_names = input_names
         self.batch_size = batch_size
-        self.seq_length = seq_length
-        # NOTE: We default `seq_length` to `None` instead of matching
-        # the HuggingFace `symbolic_trace()`'s default of `(128, 128)` to
-        # decouple the two implementations
 
     def _trace_model(self):
         if self.is_hf_model:
@@ -2431,15 +2426,7 @@ class PyTorchModel():
             traced = hf_symbolic_trace(
                 self.model,
                 input_names=self.input_names,
-                batch_size=self.batch_size,
-            ) \
-                if self.seq_length is None \
-                else hf_symbolic_trace(
-                    self.model,
-                    input_names=self.input_names,
-                    batch_size=self.batch_size,
-                    sequence_length=self.seq_length,
-                )
+            ) 
         else:
             traced = torch.fx.symbolic_trace(self.model)
 
