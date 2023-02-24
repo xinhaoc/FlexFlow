@@ -166,6 +166,7 @@ class Node():
         elif op_type == OpType.UNSQUEEZE: return UnsqueezeNode
         elif op_type == OpType.TYPE_AS: return TypeAsNode
         elif op_type == OpType.VIEW: return ViewNode
+        #todo add new classes
         elif op_type == OpType.ATTRIBUTE: return AttributeNode
         assert 0, f"Unsupported op type: {op_type}"
 
@@ -239,8 +240,8 @@ class ModuleNode(Node):
             return GeluMNode(node, module)
         elif isinstance(module, torch.nn.Embedding):
             return EmbeddingNode(node, module)
-        else:
-            assert 0, f"Unknown module: {module}"
+        # else:
+        #     assert 0, f"Unknown module: {module}"
 
 
 class LinearNode(ModuleNode):
@@ -931,6 +932,11 @@ class FunctionNode(Node):
         elif name.find("contiguous") >= 0: return ContiguousNode(node)
         elif name.find("tanh") >= 0: return TanhFNode(node)
         elif name.find("gelu") >= 0: return GeluFNode(node)
+        elif name.find("size") >= 0: return SizeNode(node) 
+        elif name.find("eq") >= 0: return EqualsNode(node)
+        elif name.find("finfo") >= 0: return FinfoNode(node)
+        elif name.find("tensor") >= 0: return TensorNode(node)
+        elif name.find("masked_fill") >= 0: return MaskFillNode(node)
         assert 0, f"Unknown function or method: {name}"
 
     @staticmethod
@@ -1398,7 +1404,7 @@ class GetItemNode(FunctionNode):
             slices = self.innodes[1]
             assert type(slices) is tuple
             return GetItemNode.slice_tensor(
-                ffmodel, input_tensor, slices, self.name,
+                ffmodel, input_tensor, slices, self.name, node_to_output
             )
         assert type(input_tensor) is list or \
             type(input_tensor) is tuple, \
@@ -1408,7 +1414,7 @@ class GetItemNode(FunctionNode):
         return input_tensor[index]
 
     @staticmethod
-    def slice_tensor(ffmodel, tensor, slices, name):
+    def slice_tensor(ffmodel, tensor, slices, name, node_to_output):
         """Returns a reshaped tensor based on the given slices."""
         def is_colon(slice_elem):
             """Returns if the slice is equivalent to `:`."""
@@ -1423,10 +1429,20 @@ class GetItemNode(FunctionNode):
             start = 0 if slice_elem.start == None else slice_elem.start
             stop = old_size if slice_elem.stop == None else slice_elem.stop
             new_size = stop - start
-            return new_size < old_size
+            return new_size <= old_size
         
         def is_single_element(slice_elem):
             return isinstance(slice_elem, int)
+        
+        def parse_node(node):
+            if node is not None:
+                return node_to_output[node.name]
+        
+        def parse_slice_element(slice_elem):
+            start = parse_node(slice_elem.start)
+            stop = parse_node(slice_elem.stop)
+            step = parse_node(slice_elem.step)
+            return slice(start, stop, step)
 
         shape = tensor.dims
 
@@ -1444,6 +1460,7 @@ class GetItemNode(FunctionNode):
         curr_tensor = copy.copy(tensor)
 
         for slice_elem in reversed(slices):
+            slice_elem = parse_slice_element(slice_elem)
             if is_colon(slice_elem):
                 assert j >= 0
                 new_shape.append(shape[j])
@@ -1907,6 +1924,8 @@ class ViewNode(FunctionNode):
         s.append(self.parse_inoutnodes(self.outnodes))
         s.append(enum_to_str(OpType, self.op_type))
         for dim in self.innodes[1:]:
+            print("-----dims-----")
+            print(dim)
             assert type(dim) is int
             s.append(str(dim))
         self._ir_string = IR_DELIMITER.join(s)
@@ -2255,6 +2274,133 @@ class GeluFNode(FunctionNode):
     def to_ff(self, ffmodel, node_to_output):
         input_tensor = node_to_output[self.innodes[0].name]
         return ffmodel.gelu(input=input_tensor, name=self.name)
+    
+class SizeNode(FunctionNode):
+    def __init__(self, node):
+        super().__init__(node)
+        self.op_type = OpType.SIZE
+        self.assert_num_args(1, Comparator.GEQ)
+
+    def parse(self):
+        s = [self.name]
+        innodes = (self.innodes[0],)
+        s.append(self.parse_inoutnodes(innodes))
+        s.append(self.parse_inoutnodes(self.outnodes))
+        s.append(enum_to_str(OpType, self.op_type))
+        if len(self.innodes) > 1:
+            s.append(str(self.innodes[1]))
+        self._ir_string = IR_DELIMITER.join(s)
+
+    @staticmethod
+    def string_to_ff(string, ffmodel, node_to_output):
+        data = Node.StringData(string)
+        input_tensor = node_to_output[data.innodes[0]]
+        return input_tensor
+
+    def to_ff(self, ffmodel, node_to_output):
+        input_tensor = node_to_output[self.innodes[0].name]
+        # set params of the next node
+        if len(self.innodes) > 1:
+            select_dim = self.innodes[1]
+            assert(type(select_dim) is int)
+            assert(len(input_tensor.dims) > select_dim)
+            dims = input_tensor.dims[select_dim]
+        else:
+            dims = input_tensor.dims
+        return dims
+    
+class EqualsNode(FunctionNode):
+    def __init__(self, node):
+        super().__init__(node)
+        self.op_type = OpType.EQUALS
+        self.assert_num_args(2, Comparator.EQ)
+
+    def parse(self):
+        s = [self.name]
+        s.append(self.parse_inoutnodes(self.innodes))
+        s.append(self.parse_inoutnodes(self.outnodes))
+        s.append(enum_to_str(OpType, self.op_type))
+        self._ir_string = IR_DELIMITER.join(s)
+
+    @staticmethod
+    def string_to_ff(string, ffmodel, node_to_output):
+        return GeluMNode.string_to_ff(string, ffmodel, node_to_output)
+
+    def to_ff(self, ffmodel, node_to_output):
+        input_tensor = node_to_output[self.innodes[0].name]
+        print(input_tensor.shape)
+        assert(False)
+        return input_tensor
+    
+class FinfoNode(FunctionNode):
+    def __init__(self, node):
+        super().__init__(node)
+        self.op_type = OpType.FINFO
+        self.assert_num_args(1, Comparator.GEQ)
+
+    def parse(self):
+        s = [self.name]
+        s.append(self.parse_inoutnodes(self.innodes))
+        s.append(self.parse_inoutnodes(self.outnodes))
+        s.append(enum_to_str(OpType, self.op_type))
+        self._ir_string = IR_DELIMITER.join(s)
+
+    @staticmethod
+    def string_to_ff(string, ffmodel, node_to_output):
+        return GeluMNode.string_to_ff(string, ffmodel, node_to_output)
+
+    def to_ff(self, ffmodel, node_to_output):
+        input_tensor = node_to_output[self.innodes[0].name]
+        print(input_tensor.shape)
+        assert(False)
+        return input_tensor
+class TensorNode(FunctionNode):
+    def __init__(self, node):
+        super().__init__(node)
+        self.op_type = OpType.FINFO
+        self.assert_num_args(1, Comparator.EQ)
+
+    def parse(self):
+        s = [self.name]
+        s.append(self.parse_inoutnodes(self.innodes))
+        s.append(self.parse_inoutnodes(self.outnodes))
+        s.append(enum_to_str(OpType, self.op_type))
+        self._ir_string = IR_DELIMITER.join(s)
+
+    @staticmethod
+    def string_to_ff(string, ffmodel, node_to_output):
+        return GeluMNode.string_to_ff(string, ffmodel, node_to_output)
+
+    def to_ff(self, ffmodel, node_to_output):
+        input_tensor = node_to_output[self.innodes[0].name]
+        print(input_tensor.shape)
+        assert(False)
+        return input_tensor
+    
+class MaskFillNode(FunctionNode):
+    def __init__(self, node):
+        super().__init__(node)
+        self.op_type = OpType.MASKFILL
+        self.assert_num_args(2, Comparator.GEQ)
+
+    def parse(self):
+        s = [self.name]
+        s.append(self.parse_inoutnodes(self.innodes))
+        s.append(self.parse_inoutnodes(self.outnodes))
+        s.append(enum_to_str(OpType, self.op_type))
+        self._ir_string = IR_DELIMITER.join(s)
+
+    @staticmethod
+    def string_to_ff(string, ffmodel, node_to_output):
+        return GeluMNode.string_to_ff(string, ffmodel, node_to_output)
+
+    def to_ff(self, ffmodel, node_to_output):
+        input_tensor = node_to_output[self.innodes[0].name]
+        print(input_tensor.shape)
+        assert(False)
+        return input_tensor
+    
+    
 
 
 class AttributeNode(Node):
@@ -2429,6 +2575,9 @@ class PyTorchModel():
             ) 
         else:
             traced = torch.fx.symbolic_trace(self.model)
+            
+        print("--------model-----------")
+        print(traced.code)
 
         # Convert the fx graph to an internal graph representation
         name_to_module = {}
@@ -2480,7 +2629,7 @@ class PyTorchModel():
             i += 1
         return layer_norm_graph
 
-    def torch_to_ff(self, ffmodel, input_tensors, verbose=False):
+    def torch_to_ff(self, ffmodel, input_tensors, verbose=True):
         """
         Traces the PyTorch model wrapped by this ``PyTorchModel`` instance,
         and adds operators to ``ffmodel`` coresponding to the computational
@@ -2503,10 +2652,12 @@ class PyTorchModel():
         graph = self._trace_model()
         output_tensors = []
         node_to_output = OrderedDict()
+        node_for_argument = {}
         input_index = 0
 
         for node in graph:
             if verbose:
+                print("---verbose---")
                 print(f"{node.ir_string}")
             if isinstance(node, InputNode):
                 node_output = node.to_ff(input_tensors, input_index)

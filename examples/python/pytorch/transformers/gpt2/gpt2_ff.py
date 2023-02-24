@@ -4,17 +4,21 @@ import sys
 import numpy as np
 from flexflow.core import *
 from flexflow.torch.model import PyTorchModel
-from transformers import DistilBertForSequenceClassification, DistilBertTokenizer
+from transformers import GPT2Config, GPT2ForSequenceClassification, GPT2Tokenizer
 from datasets import load_dataset
 
-tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
-max_input_length = tokenizer.max_model_input_sizes['distilbert-base-uncased']
-model = DistilBertForSequenceClassification.from_pretrained('distilbert-base-uncased')
+config = GPT2Config.from_pretrained("distilgpt2")
+model = GPT2ForSequenceClassification.from_pretrained("distilgpt2", config=config)
+tokenizer = GPT2Tokenizer.from_pretrained("distilgpt2")
+max_input_length = tokenizer.max_model_input_sizes['distilgpt2']
 
 def prepare_numpy_dataset():
     dataset = load_dataset("imdb")
     train_dataset = dataset["train"].shuffle(seed=123)
     test_dataset = dataset["test"].shuffle(seed=123)
+    
+    if tokenizer.pad_token is None:
+        tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
     encode_train_dataset = train_dataset.map(lambda examples: tokenizer(
         examples['text'], truncation=True, padding=True, max_length=max_input_length), batched=True)
@@ -62,7 +66,6 @@ def top_level_task(encode_test_dataset, encode_train_dataset):
     input_names = ["input_ids", "attention_mask", "labels"]
 
     print("Tracing the model...")
-    model.config.problem_type = 'single_label_classification'
     hf_model = PyTorchModel(
         model, is_hf_model=True, input_names=input_names,
         batch_size=batch_size
@@ -103,5 +106,8 @@ def top_level_task(encode_test_dataset, encode_train_dataset):
 if __name__ == "__main__":
     print("------")
     encode_test_dataset, encode_train_dataset = prepare_numpy_dataset()
+    config.pad_token_id = tokenizer.pad_token_id
+    model.resize_token_embeddings(len(tokenizer)) 
+    model.config.problem_type = 'single_label_classification'
     #start train&validation
     top_level_task(encode_test_dataset, encode_train_dataset)

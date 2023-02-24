@@ -108,6 +108,11 @@ class OpType(Enum):
   TYPE_AS = 2104
   VIEW = 2105
   GATHER = 2106
+  SIZE = 2107
+  EQUALS = 2108
+  FINFO = 2109
+  TENSOR = 2110
+  MASKFILL = 2111
   ATTRIBUTE = 2200
 def enum_to_int(enum, enum_item):
   for item in enum:
