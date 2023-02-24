@@ -1093,6 +1093,18 @@ class FunctionNode(Node):
             y = ffmodel.create_tensor(bc_shape, dtype, True)
             y.set_tensor(ffmodel, np2)
         return x, y
+    
+    @staticmethod
+    def parse_node(node, node_to_output):
+        """some of the args in graph is class of fx.node,
+           it nees to be convert to values get from previous nodes
+           eg. size_1 = input_ids.size(1)
+           getitem = distilbert_embeddings_position_ids[(slice(None, None, None), slice(None, size_1, None))]
+           the intager value of size_1 -> node size_1
+        """
+        if node is not None and isinstance(node, torch.fx.node.Node):
+            return node_to_output[node.name]
+        return node
 
 
 class ScalarAddNode(FunctionNode):
@@ -1434,14 +1446,10 @@ class GetItemNode(FunctionNode):
         def is_single_element(slice_elem):
             return isinstance(slice_elem, int)
         
-        def parse_node(node):
-            if node is not None:
-                return node_to_output[node.name]
-        
         def parse_slice_element(slice_elem):
-            start = parse_node(slice_elem.start)
-            stop = parse_node(slice_elem.stop)
-            step = parse_node(slice_elem.step)
+            start = FunctionNode.parse_node(slice_elem.start, node_to_output)
+            stop = FunctionNode.parse_node(slice_elem.stop, node_to_output)
+            step = FunctionNode.parse_node(slice_elem.step, node_to_output)
             return slice(start, stop, step)
 
         shape = tensor.dims
@@ -1924,8 +1932,7 @@ class ViewNode(FunctionNode):
         s.append(self.parse_inoutnodes(self.outnodes))
         s.append(enum_to_str(OpType, self.op_type))
         for dim in self.innodes[1:]:
-            print("-----dims-----")
-            print(dim)
+            dim = FunctionNode.parse_node(dim)
             assert type(dim) is int
             s.append(str(dim))
         self._ir_string = IR_DELIMITER.join(s)
@@ -2324,7 +2331,9 @@ class EqualsNode(FunctionNode):
 
     @staticmethod
     def string_to_ff(string, ffmodel, node_to_output):
-        return GeluMNode.string_to_ff(string, ffmodel, node_to_output)
+         data = Node.StringData(string)
+         input_tensor = node_to_output[data.innodes[0]]
+         return input_tensor
 
     def to_ff(self, ffmodel, node_to_output):
         input_tensor = node_to_output[self.innodes[0].name]
@@ -2347,13 +2356,16 @@ class FinfoNode(FunctionNode):
 
     @staticmethod
     def string_to_ff(string, ffmodel, node_to_output):
-        return GeluMNode.string_to_ff(string, ffmodel, node_to_output)
+        data = Node.StringData(string)
+        input_tensor = node_to_output[data.innodes[0]]
+        return input_tensor
 
     def to_ff(self, ffmodel, node_to_output):
-        input_tensor = node_to_output[self.innodes[0].name]
-        print(input_tensor.shape)
-        assert(False)
-        return input_tensor
+        input = node_to_output[self.innodes[0].name]
+        print("------finfo--------")
+        print(input)
+        assert(isinstance(input, torch.dtype))
+        return torch.finfo(input)
 class TensorNode(FunctionNode):
     def __init__(self, node):
         super().__init__(node)
@@ -2369,7 +2381,9 @@ class TensorNode(FunctionNode):
 
     @staticmethod
     def string_to_ff(string, ffmodel, node_to_output):
-        return GeluMNode.string_to_ff(string, ffmodel, node_to_output)
+        data = Node.StringData(string)
+        input_tensor = node_to_output[data.innodes[0]]
+        return input_tensor
 
     def to_ff(self, ffmodel, node_to_output):
         input_tensor = node_to_output[self.innodes[0].name]
@@ -2392,7 +2406,9 @@ class MaskFillNode(FunctionNode):
 
     @staticmethod
     def string_to_ff(string, ffmodel, node_to_output):
-        return GeluMNode.string_to_ff(string, ffmodel, node_to_output)
+        data = Node.StringData(string)
+        input_tensor = node_to_output[data.innodes[0]]
+        return input_tensor
 
     def to_ff(self, ffmodel, node_to_output):
         input_tensor = node_to_output[self.innodes[0].name]
