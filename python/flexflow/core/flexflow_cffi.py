@@ -157,6 +157,14 @@ class Max(Op):
 class Min(Op):
   def __init__(self, handle, idx=None, name=None):
     super(Min, self).__init__(handle, idx, name)
+    
+# -----------------------------------------------------------------------
+# Equal
+# -----------------------------------------------------------------------
+class Equal(Op):
+  def __init__(self, handle, idx=None, name=None):
+    super(Equal, self).__init__(handle, idx, name)
+
 
 # -----------------------------------------------------------------------
 # ReduceSum

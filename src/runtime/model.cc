@@ -50,6 +50,7 @@
 #include "flexflow/ops/split.h"
 #include "flexflow/ops/topk.h"
 #include "flexflow/ops/transpose.h"
+#include "flexflow/ops/comparison.h"
 #include "flexflow/parallel_ops/combine.h"
 #include "flexflow/parallel_ops/fused_parallel_op.h"
 #include "flexflow/parallel_ops/partition.h"
@@ -2683,7 +2684,8 @@ Op *FFModel::create_operator_from_layer(
     case OP_EW_MUL:
     case OP_EW_DIV:
     case OP_EW_MAX:
-    case OP_EW_MIN: {
+    case OP_EW_MIN:
+    case OP_EW_EQUAL: {
       Op *op = ElementBinary::create_operator_from_layer(*this, layer, inputs);
       operators.push_back(op);
       return op;

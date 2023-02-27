@@ -1932,8 +1932,6 @@ class ViewNode(FunctionNode):
         s.append(self.parse_inoutnodes(self.outnodes))
         s.append(enum_to_str(OpType, self.op_type))
         for dim in self.innodes[1:]:
-            dim = FunctionNode.parse_node(dim)
-            assert type(dim) is int
             s.append(str(dim))
         self._ir_string = IR_DELIMITER.join(s)
 
@@ -1952,7 +1950,10 @@ class ViewNode(FunctionNode):
     def to_ff(self, ffmodel, node_to_output):
         input_tensor = node_to_output[self.innodes[0].name]
         view_shape = self.innodes[1:]
-        shape = FunctionNode.get_view_shape(input_tensor, view_shape)
+        view_shape_list = []
+        for dim, dim_size in enumerate(view_shape):
+            view_shape_list.append(int(FunctionNode.parse_node(dim_size, node_to_output)))
+        shape = FunctionNode.get_view_shape(input_tensor, view_shape_list)
         # Treat as a special case of `reshape()`
         return ffmodel.reshape(
             input=input_tensor, shape=shape, name=self.name
@@ -2324,9 +2325,12 @@ class EqualsNode(FunctionNode):
 
     def parse(self):
         s = [self.name]
-        s.append(self.parse_inoutnodes(self.innodes))
+        innodes = (self.innodes[0],)
+        s.append(self.parse_inoutnodes(innodes))
         s.append(self.parse_inoutnodes(self.outnodes))
         s.append(enum_to_str(OpType, self.op_type))
+        if len(self.innodes) > 1:
+            s.append(str(self.innodes[1]))
         self._ir_string = IR_DELIMITER.join(s)
 
     @staticmethod
@@ -2337,7 +2341,9 @@ class EqualsNode(FunctionNode):
 
     def to_ff(self, ffmodel, node_to_output):
         input_tensor = node_to_output[self.innodes[0].name]
-        print(input_tensor.shape)
+        print("-------eq node---------")
+        print(input_tensor.dims)
+        print(self.innodes[1])
         assert(False)
         return input_tensor
     

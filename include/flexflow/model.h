@@ -364,6 +364,11 @@ public:
              const Tensor y,
              bool inplace_a = false,
              char const *name = NULL);
+  // Add a equal layer
+  Tensor equal(const Tensor x,
+             const Tensor y,
+             bool inplace_a = false,
+             char const *name = NULL);           
   // Add a rsqrt layer
   Tensor rsqrt(const Tensor x, bool inplace = true, char const *name = NULL);
   // Add a pow layer
@@ -550,6 +555,11 @@ public:
                              bool add_zero_attn = false,
                              Initializer *kernel_initializer = NULL,
                              char const *name = NULL);
+  Tensor masked_fill(const Tensor input,
+             const Tensor mask,
+             const Tensor value,
+             bool inplace_a = false,
+             char const *name = NULL);
   Tensor create_tensor_legion_ordering(int num_dim,
                                        int const dims[],
                                        DataType data_type,
