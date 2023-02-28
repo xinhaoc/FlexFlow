@@ -133,6 +133,9 @@ enum TaskIDs {
   ATTENTION_INIT_TASK_ID,
   ATTENTION_FWD_TASK_ID,
   ATTENTION_BWD_TASK_ID,
+  MASKEDFILL_INIT_TASK_ID,
+  MASKEDFILL_FWD_TASK_ID,
+  MASKEDFILL_BWD_TASK_ID,
   MSELOSS_BWD_TASK_ID,
   FUSEDOP_INIT_TASK_ID,
   FUSEDOP_FWD_TASK_ID,
@@ -272,6 +275,7 @@ class Softmax;
 class Split;
 class TopK;
 class Transpose;
+class MaskedFill;
 class Combine;
 class Repartition;
 class Reduction;
@@ -557,7 +561,7 @@ public:
                              char const *name = NULL);
   Tensor masked_fill(const Tensor input,
              const Tensor mask,
-             const Tensor value,
+             float value, 
              bool inplace_a = false,
              char const *name = NULL);
   Tensor create_tensor_legion_ordering(int num_dim,
@@ -887,6 +891,10 @@ public:
           std::pair<std::pair<ParallelTensorShape, ParallelTensorShape>,
                     ElementBinaryParams>,
           ElementBinary *>,
+      std::unordered_map<
+          std::pair<std::pair<ParallelTensorShape, ParallelTensorShape>,
+                    MaskedFilledParams>,
+          MaskedFill *>,
       std::unordered_map<std::pair<ParallelTensorShape, ElementUnaryParams>,
                          ElementUnary *>,
       std::unordered_map<std::pair<ParallelTensorShape, EmbeddingParams>,
@@ -920,7 +928,7 @@ public:
                          Softmax *>,
       std::unordered_map<std::pair<ParallelTensorShape, TopKParams>, TopK *>,
       std::unordered_map<std::pair<ParallelTensorShape, TransposeParams>,
-                         Transpose *>,
+                         Transpose *>,                
       std::unordered_map<std::pair<ParallelTensorShape, RepartitionParams>,
                          Repartition *>,
       std::unordered_map<std::pair<ParallelTensorShape, ReplicateParams>,

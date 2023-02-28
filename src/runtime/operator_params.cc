@@ -27,7 +27,7 @@
 #include "flexflow/ops/split.h"
 #include "flexflow/ops/topk.h"
 #include "flexflow/ops/transpose.h"
-#include "flexflow/ops/comparison.h"
+#include "flexflow/ops/masked_fill.h"
 #include "flexflow/parallel_ops/combine.h"
 #include "flexflow/parallel_ops/fused_parallel_op.h"
 #include "flexflow/parallel_ops/partition.h"
@@ -48,6 +48,7 @@ tl::optional<OperatorParameters> get_op_parameters(Op const *op) {
     case OP_EW_DIV:
     case OP_EW_MAX:
     case OP_EW_MIN:
+    case OP_EW_EQUAL:
       return ((ElementBinary *)op)->get_params();
     case OP_EXP:
     case OP_SIN:
@@ -111,10 +112,8 @@ tl::optional<OperatorParameters> get_op_parameters(Op const *op) {
       return ((Aggregate *)op)->get_params();
     case OP_AGG_SPEC:
       return ((AggregateSpec *)op)->get_params();
-    case OP_EW_EQUAL:
-    case OP_EW_GREATER:
-    case OP_EW_LESS:
-      return ((Comparison *)op)->get_params();
+    case OP_MASKED_FILL
+      return ((MaskedFill *)op)->get_params();
 
       // TODO: implement the get_params() function for the operators below and
       // uncomment the lines below

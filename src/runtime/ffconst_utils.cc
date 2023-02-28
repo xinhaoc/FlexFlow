@@ -159,6 +159,8 @@ std::string get_operator_type_name(OperatorType type) {
       return "LayerNorm";
     case OP_IDENTITY:
       return "Identity";
+    case OP_MASKED_FILL:
+      return "MaskedFill";
     // Parallel Ops
     case OP_REPARTITION:
       return "Repartition";

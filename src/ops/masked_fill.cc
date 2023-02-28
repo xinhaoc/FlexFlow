@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 
-#include "flexflow/ops/comparison.h"
-#include "flexflow/ops/kernels/gather_kernels.h"
+#include "flexflow/ops/masked_fill.h"
+#include "flexflow/ops/kernels/masked_fill_kernels.h"
 #include "legion/legion_utilities.h"
 
 namespace FlexFlow {
@@ -36,13 +36,13 @@ using Legion::TaskArgument;
 using Legion::TaskLauncher;
 using PCG::Node;
 
-using namespace FlexFlow::Kernels::Gather;
+using namespace FlexFlow::Kernels::MaskedFill;
 
-bool operator==(ComparisonParams const &lhs, ComparisonParams const &rhs) {
-  return lhs.type == rhs.type;
+bool operator==(MaskedFillParams const &lhs, MaskedFillParams const &rhs) {
+  return lhs.legion_dim == rhs.legion_dim;
 }
 
-bool ComparisonParams::is_valid(
+bool MaskedFillParams::is_valid(
     std::pair<ParallelTensorShape, ParallelTensorShape> const &input) const {
   if (!input.first.is_valid()) {
     return false;
@@ -53,146 +53,128 @@ bool ComparisonParams::is_valid(
   if (input.first.num_dims != input.second.num_dims) {
     return false;
   }
-  ParallelTensorShape A = input.first;
-  ParallelTensorShape B = input.second;
-  int numdim = std::min(A.num_dims, B.num_dims);
-  for (int i = 0; i < numdim; i++) {
-    if (A.dims[i].size > 1 && B.dims[i].size > 1) {
-      if (A.dims[i] != B.dims[i]) {
-        return false;
-      }
+  for (int i = 0; i < input.first.num_dims; i++) {
+    if (i != legion_dim &&
+        input.first.dims[i].size < input.second.dims[i].size) {
+      return false;
     }
   }
   return true;
 }
 
-ComparisonParams Comparison::get_params() const {
-  ComparisonParams params;
-  params.type = this->op_type;
+MaskedFillParams MaskedFill::get_params() const {
+  MaskedFillParams params;
+  params.filled_value = this->filled_value;
   return params;
 }
 
-Tensor FFModel::comparison(OperatorType op
-                       const Tensor input,
-                       const Tensor index,
-                       int dim,
+Tensor FFModel::masked_fill(const Tensor input,
+                       const Tensor mask,
+                       float value,
                        char const *name) {
-  Layer *gather = new Layer(this,
-                            OP_GATHER,
+  Layer *masked_fill = new Layer(this,
+                            OP_MASKED_FILL,
                             DT_FLOAT,
                             name,
                             2 /*inputs*/,
                             0 /*weights*/,
                             1 /*output*/,
                             input,
-                            index);
-  assert(index->data_type == DT_INT32 || index->data_type == DT_INT64);
-  assert(input->num_dims == index->num_dims);
-  int legion_dim = input->num_dims - 1 - dim;
-  // https://pytorch.org/docs/stable/generated/torch.gather.html
-  // Currently we assume index.size(d) == input.size(d) for all
-  // dimensions d != dim, which is a stronger constraint that PyTorch's
+                            mask);
+  // https://pytorch.org/docs/stable/generated/torch.Tensor.masked_fill_.html#torch-tensor-masked-fill
+  assert(value->data_type == DT_FLOAT);
+  assert(input->num_dims == mask->num_dims);
   for (int i = 0; i < input->num_dims; i++) {
-    if (i != legion_dim) {
-      assert(input->dims[i] == index->dims[i]);
-    }
+    assert(input->dims[i] == mask->dims[i]);
   }
   int dims[MAX_TENSOR_DIM];
-  for (int i = 0; i < index->num_dims; i++) {
-    dims[i] = index->dims[i];
+  for (int i = 0; i < input->num_dims; i++) {
+    dims[i] = input->dims[i];
   }
-  gather->outputs[0] = create_tensor_legion_ordering(
-      index->num_dims, dims, input->data_type, gather, 0, true /*create_grad*/);
-  gather->add_int_property("legion_dim", legion_dim);
-  layers.push_back(gather);
-  return gather->outputs[0];
+  masked_fill->outputs[0] = create_tensor_legion_ordering(
+      input->num_dims, dims, input->data_type, masked_fill, 0, true /*create_grad*/);
+  masked_fill->add_int_property("filled_value", value);
+  layers.push_back(masked_fill);
+  return masked_fill->outputs[0];
 }
 
-Op *Gather::create_operator_from_layer(
+Op *MaskedFill::create_operator_from_layer(
     FFModel &model,
     Layer const *layer,
     std::vector<ParallelTensor> const &inputs) {
-  long long value;
-  layer->get_int_property("legion_dim", value);
-  int legion_dim = value;
-  return new Gather(model, inputs[0], inputs[1], legion_dim, layer->name);
+  float filled_value;
+  layer->get_int_property("filled_value", value);
+  return new MaskedFill(model, inputs[0], inputs[1], filled_value, layer->name);
 }
 
-Gather::Gather(FFModel &model,
-               GatherParams const &params,
+MaskedFill::MaskedFill(FFModel &model,
+               MaskedFillParams const &params,
                std::pair<ParallelTensor, ParallelTensor> const &inputs,
                char const *name)
-    : Gather(model, inputs.first, inputs.second, params.legion_dim, name) {}
+    : MaskedFill(model, inputs.first, inputs.second, params.filled_value, name) {}
 
-Gather::Gather(FFModel &model,
+MaskedFill::MaskedFill(FFModel &model,
                const ParallelTensor input,
-               const ParallelTensor index,
-               int _legion_dim,
+               const ParallelTensor mask,
+               float _filled_value,
                char const *name)
     : Op(model,
-         OP_GATHER,
+         OP_MASKED_FILL,
          input->data_type,
          name,
          2 /*inputs*/,
          0 /*weights*/,
          1 /*outputs*/,
          input,
-         index),
-      legion_dim(_legion_dim) {
-  // Assume that input and index have the same paralleldim except
-  // for the legion_dim-th dim, which cannot be parallelized
+         mask),
+      filled_value(_filled_value) {
   for (int i = 0; i < input->num_dims; i++) {
-    if (i != legion_dim) {
-      assert(input->dims[i] == index->dims[i]);
-    }
+    assert(input->dims[i] == mask->dims[i]);
   }
-  assert(index->dims[legion_dim].degree == 1);
-  assert(input->dims[legion_dim].degree == 1);
-  // output has the same parallel dims as index
   ParallelDim dims[MAX_TENSOR_DIM];
-  for (int i = 0; i < index->num_dims; i++) {
-    dims[i] = index->dims[i];
+  for (int i = 0; i < mask->num_dims; i++) {
+    dims[i] = mask->dims[i];
   }
   outputs[0] = model.create_parallel_tensor_legion_ordering(
-      index->num_dims, dims, input->data_type, this);
+      mask->num_dims, dims, input->data_type, this);
 }
 
-void Gather::serialize(Legion::Serializer &sez) const {
-  GatherParams params = get_params();
-  sez.serialize(params.legion_dim);
+void MaskedFill::serialize(Legion::Serializer &sez) const {
+  MaskedFillParams params = get_params();
+  sez.serialize(params.filled_value);
 }
 
 using PCG::Node;
 /*static*/
-Node Gather::deserialize(FFModel &ff,
+Node MaskedFill::deserialize(FFModel &ff,
                          Legion::Deserializer &dez,
                          ParallelTensor inputs[],
                          int num_inputs) {
   assert(num_inputs == 2);
-  int legion_dim;
-  dez.deserialize(legion_dim);
-  GatherParams params;
-  params.legion_dim = legion_dim;
-  return ff.get_or_create_node<Gather>({inputs[0], inputs[1]}, params);
+  float filled_value
+  dez.deserialize(filled_value);
+  MaskedFillParams params;
+  params.filled_value = filled_value;
+  return ff.get_or_create_node<MaskedFill>({inputs[0], inputs[1]}, params);
 }
 
-Op *Gather::materialize(FFModel &ff,
+Op *MaskedFill::materialize(FFModel &ff,
                         ParallelTensor inputs[],
                         int num_inputs) const {
-  GatherParams params = get_params();
-  return new Gather(ff, params, {inputs[0], inputs[1]}, this->name);
+  MaskedFillParams params = get_params();
+  return new MaskedFill(ff, params, {inputs[0], inputs[1]}, this->name);
 }
 
-void Gather::init(FFModel const &ff) {
+void MaskedFill::init(FFModel const &ff) {
   assert(check_output_input_weight_same_parallel_is());
   parallel_is = outputs[0]->parallel_is;
   ArgumentMap argmap;
   Context ctx = ff.config.lg_ctx;
   Runtime *runtime = ff.config.lg_hlr;
   set_argumentmap_for_init(ff, argmap);
-  IndexLauncher launcher(GATHER_INIT_TASK_ID,
+  IndexLauncher launcher(MASKEDFILL_INIT_TASK_ID,
                          parallel_is,
-                         TaskArgument(this, sizeof(Gather)),
+                         TaskArgument(this, sizeof(MaskedFill)),
                          argmap,
                          Predicate::TRUE_PRED,
                          false /*must*/,
@@ -221,42 +203,26 @@ void Gather::init(FFModel const &ff) {
   set_opmeta_from_futuremap(ff, fm);
 }
 
-OpMeta *Gather::init_task(Task const *task,
+OpMeta *MaskedFillParams::init_task(Task const *task,
                           std::vector<PhysicalRegion> const &regions,
                           Context ctx,
                           Runtime *runtime) {
   assert(regions.size() == 3);
   assert(task->regions.size() == 3);
-  Gather const *gather = (Gather const *)task->args;
+  MaskedFill const *maskedfill = (MaskedFill const *)task->args;
   FFHandler handle = *((FFHandler const *)task->local_args);
-  GatherMeta *m = new GatherMeta(handle, gather);
-  GenericTensorAccessorR input = helperGetGenericTensorAccessorRO(
-      m->input_type[0], regions[0], task->regions[0], FID_DATA, ctx, runtime);
-  GenericTensorAccessorR index = helperGetGenericTensorAccessorRO(
-      m->input_type[1], regions[1], task->regions[1], FID_DATA, ctx, runtime);
-  GenericTensorAccessorW output = helperGetGenericTensorAccessorWO(
-      m->output_type[0], regions[2], task->regions[2], FID_DATA, ctx, runtime);
-  assert(input.domain.get_dim() == index.domain.get_dim());
-  assert(output.domain.get_dim() == index.domain.get_dim());
-  for (int i = 0; i < input.domain.get_dim(); i++) {
-    assert(index.domain.hi()[i] == output.domain.hi()[i]);
-    assert(index.domain.lo()[i] == output.domain.lo()[i]);
-    if (i != m->legion_dim) {
-      assert(input.domain.hi()[i] == index.domain.hi()[i]);
-      assert(input.domain.lo()[i] == index.domain.lo()[i]);
-    }
-  }
+  MaskedFillParams *m = new MaskedFillParams(handle, maskedfill);
   return m;
 }
 
-void Gather::forward(FFModel const &ff) {
+void MaskedFill::forward(FFModel const &ff) {
   ArgumentMap argmap;
   Context ctx = ff.config.lg_ctx;
   Runtime *runtime = ff.config.lg_hlr;
   set_argumentmap_for_forward(ff, argmap);
-  IndexLauncher launcher(GATHER_FWD_TASK_ID,
+  IndexLauncher launcher(MASKEDFILL_FWD_TASK_ID,
                          parallel_is,
-                         TaskArgument(nullptr, false),
+                         TaskArgument(NULL, 0),
                          argmap,
                          Predicate::TRUE_PRED,
                          false /*must*/,
@@ -283,28 +249,28 @@ void Gather::forward(FFModel const &ff) {
   runtime->execute_index_space(ctx, launcher);
 }
 
-void Gather::forward_task(Task const *task,
+void MaskedFill::forward_task(Task const *task,
                           std::vector<PhysicalRegion> const &regions,
                           Context ctx,
                           Runtime *runtime) {
   assert(regions.size() == 3);
   assert(task->regions.size() == 3);
-  GatherMeta const *m = *((GatherMeta **)task->local_args);
+  MaskedFillParams const *m = *((MaskedFillParams **)task->local_args);
   GenericTensorAccessorR input = helperGetGenericTensorAccessorRO(
       m->input_type[0], regions[0], task->regions[0], FID_DATA, ctx, runtime);
-  GenericTensorAccessorR index = helperGetGenericTensorAccessorRO(
+  GenericTensorAccessorR mask = helperGetGenericTensorAccessorRO(
       m->input_type[1], regions[1], task->regions[1], FID_DATA, ctx, runtime);
   GenericTensorAccessorW output = helperGetGenericTensorAccessorWO(
       m->output_type[0], regions[2], task->regions[2], FID_DATA, ctx, runtime);
-  forward_kernel_wrapper(m, input, index, output);
+  forward_kernel_wrapper(m, input, mask, output);
 }
 
-void Gather::backward(FFModel const &ff) {
+void MaskedFill::backward(FFModel const &ff) {
   ArgumentMap argmap;
   Context ctx = ff.config.lg_ctx;
   Runtime *runtime = ff.config.lg_hlr;
   set_argumentmap_for_backward(ff, argmap);
-  IndexLauncher launcher(GATHER_BWD_TASK_ID,
+  IndexLauncher launcher(MASKEDFILL_BWD_TASK_ID,
                          parallel_is,
                          TaskArgument(NULL, 0),
                          argmap,
@@ -333,36 +299,36 @@ void Gather::backward(FFModel const &ff) {
   runtime->execute_index_space(ctx, launcher);
 }
 
-void Gather::backward_task(Task const *task,
+void MaskedFill::backward_task(Task const *task,
                            std::vector<PhysicalRegion> const &regions,
                            Context ctx,
                            Runtime *runtime) {
   assert(regions.size() == 3);
   assert(task->regions.size() == 3);
-  GatherMeta const *m = *((GatherMeta **)task->local_args);
+  MaskedFillMeta const *m = *((MaskedFillMeta **)task->local_args);
   GenericTensorAccessorR output_grad = helperGetGenericTensorAccessorRO(
       m->output_type[0], regions[0], task->regions[0], FID_DATA, ctx, runtime);
-  GenericTensorAccessorR index = helperGetGenericTensorAccessorRO(
+  GenericTensorAccessorR mask = helperGetGenericTensorAccessorRO(
       m->input_type[1], regions[1], task->regions[1], FID_DATA, ctx, runtime);
   GenericTensorAccessorW input_grad = helperGetGenericTensorAccessorRW(
       m->input_type[0], regions[2], task->regions[2], FID_DATA, ctx, runtime);
-  backward_kernel_wrapper(m, output_grad, index, input_grad);
+  backward_kernel_wrapper(m, output_grad, mask, input_grad);
 }
 
-bool Gather::measure_operator_cost(Simulator *sim,
+bool MaskedFill::measure_operator_cost(Simulator *sim,
                                    MachineView const &mv,
                                    CostMetrics &cost_metrics) const {
-  ParallelTensorBase sub_input, sub_index, sub_output;
+  ParallelTensorBase sub_input, sub_mask, sub_output;
   if (!outputs[0]->get_sub_tensor(mv, sub_output)) {
     return false;
   }
   if (!inputs[0]->get_sub_tensor(mv, sub_input)) {
     return false;
   }
-  if (!inputs[1]->get_sub_tensor(mv, sub_index)) {
+  if (!inputs[1]->get_sub_tensor(mv, sub_mask)) {
     return false;
   }
-  GatherMeta *m = new GatherMeta(sim->handler, this);
+  MaskedFillMeta *m = new MaskedFillMeta(sim->handler, this);
   sim->free_all();
   bool out_of_memory = false;
   Domain input_domain = sub_input.get_domain();
@@ -370,12 +336,12 @@ bool Gather::measure_operator_cost(Simulator *sim,
   cost_metrics.inputs_memory += cost_metrics.total_mem_diff_from(sim->offset);
   GenericTensorAccessorW input_acc(
       inputs[0]->data_type, input_domain, input_ptr);
-  Domain index_domain = sub_index.get_domain();
-  void *index_ptr = sim->allocate(sub_index.get_volume(), inputs[1]->data_type);
+  Domain mask_domain = sub_mask.get_domain();
+  void *mask_ptr = sim->allocate(sub_mask.get_volume(), inputs[1]->data_type);
   cost_metrics.inputs_memory += cost_metrics.total_mem_diff_from(sim->offset);
-  GenericTensorAccessorW index_acc(
-      inputs[1]->data_type, index_domain, index_ptr);
-  out_of_memory = out_of_memory || (input_ptr == NULL) || (index_ptr == NULL);
+  GenericTensorAccessorW mask_acc(
+      inputs[1]->data_type, mask_domain, mask_ptr);
+  out_of_memory = out_of_memory || (input_ptr == NULL) || (mask_ptr == NULL);
   Domain out_domain = sub_output.get_domain();
   void *output_ptr =
       sim->allocate(sub_output.get_volume(), outputs[0]->data_type);
@@ -391,24 +357,24 @@ bool Gather::measure_operator_cost(Simulator *sim,
 
   std::function<void()> forward, backward;
   forward = [&] {
-    forward_kernel_wrapper(m, input_acc, index_acc, output_acc);
+    forward_kernel_wrapper(m, input_acc, mask_acc, output_acc);
   };
   if (sim->computationMode == COMP_MODE_TRAINING) {
     backward = [&] {
-      backward_kernel_wrapper(m, output_acc, index_acc, input_acc);
+      backward_kernel_wrapper(m, output_acc, mask_acc, input_acc);
     };
   }
 
   inner_measure_operator_cost(sim, forward, backward, cost_metrics);
 
   if (sim->computationMode == COMP_MODE_TRAINING) {
-    printf("[Measure Gather] name(%s) forward_time(%.4lf) "
+    printf("[Measure MaskedFill] name(%s) forward_time(%.4lf) "
            "backward_time(%.4lf)\n",
            name,
            cost_metrics.forward_time,
            cost_metrics.backward_time);
   } else {
-    printf("[Measure Gather] name(%s) forward_time(%.4lf)\n",
+    printf("[Measure MaskedFill] name(%s) forward_time(%.4lf)\n",
            name,
            cost_metrics.forward_time);
   }
@@ -419,10 +385,10 @@ bool Gather::measure_operator_cost(Simulator *sim,
 }; // namespace FlexFlow
 
 namespace std {
-size_t hash<FlexFlow::GatherParams>::operator()(
-    FlexFlow::GatherParams const &params) const {
+size_t hash<FlexFlow::MaskedFillParams>::operator()(
+    FlexFlow::MaskedFillParams const &params) const {
   size_t key = 0;
-  hash_combine(key, params.legion_dim);
+  hash_combine(key, params.filled_value);
   return key;
 }
 }; // namespace std

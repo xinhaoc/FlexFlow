@@ -1,41 +1,36 @@
-#ifndef _FLEXFLOW_COMPARISON_H
-#define _FLEXFLOW_COMPARISON_H
+#ifndef _FLEXFLOW_OPS_MASKED_FILL_H
+#define _FLEXFLOW_OPS_MASKED_FILL_H
 
 #include "flexflow/model.h"
-#include "flexflow/ops/comparison_params.h"
+#include "flexflow/ops/masked_fill_params.h"
 
 namespace FlexFlow {
 
-class Comparison : public Op {
+class MaskedFill : public Op {
 public:
-  using Params = ComparisonParams;
+  using Params = MaskedFillParams;
   using Input = std::pair<ParallelTensor, ParallelTensor>;
-
-  Comparison(FFModel &model,
-                OperatorType type,
-                const ParallelTensor x,
-                const ParallelTensor y,
-                bool inplace_a,
-                char const *name);
-  Comparison(FFModel &model,
-                Params const &params,
-                Input const &inputs,
-                char const *name = nullptr,
-                bool inplace_a = false);
+  MaskedFill(FFModel &model,
+         Params const &params,
+         Input const &input,
+         char const *name = nullptr);
+  MaskedFill(FFModel &model,
+         const ParallelTensor input,
+         const ParallelTensor mask,
+         int legion_dim,
+         char const *name = nullptr);
   void init(FFModel const &) override;
   void forward(FFModel const &) override;
   void backward(FFModel const &) override;
   void print_layer(FFModel const &model) override {
     assert(0);
   }
-  void map_output_tensors(FFModel &model) override;
-  bool can_inplace_output() override;
-  bool has_inplace_output() override;
-  void do_inplace_output() override;
+
   static Op *
       create_operator_from_layer(FFModel &model,
                                  Layer const *layer,
                                  std::vector<ParallelTensor> const &inputs);
+
   static OpMeta *init_task(Legion::Task const *task,
                            std::vector<Legion::PhysicalRegion> const &regions,
                            Legion::Context ctx,
@@ -51,13 +46,20 @@ public:
   bool measure_operator_cost(Simulator *sim,
                              MachineView const &pc,
                              CostMetrics &cost_metrics) const override;
+  void serialize(Legion::Serializer &s) const override;
+  static PCG::Node deserialize(FFModel &ff,
+                               Legion::Deserializer &d,
+                               ParallelTensor inputs[],
+                               int num_inputs);
+  Op *materialize(FFModel &ff,
+                  ParallelTensor inputs[],
+                  int num_inputs) const override;
   Params get_params() const;
 
 public:
-  bool inplace_a, has_same_operands;
-  bool broadcast_input1, broadcast_input2;
+  float filled_value;
 };
 
 }; // namespace FlexFlow
 
-#endif // _FLEXFLOW_COMPARISON_H
+#endif // _FLEXFLOW_OPS_MASKED_FILL_H

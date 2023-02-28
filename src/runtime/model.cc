@@ -51,6 +51,7 @@
 #include "flexflow/ops/topk.h"
 #include "flexflow/ops/transpose.h"
 #include "flexflow/ops/comparison.h"
+#include "flexflow/ops/masked_fill.h"
 #include "flexflow/parallel_ops/combine.h"
 #include "flexflow/parallel_ops/fused_parallel_op.h"
 #include "flexflow/parallel_ops/partition.h"
@@ -2778,6 +2779,11 @@ Op *FFModel::create_operator_from_layer(
       operators.push_back(op);
       return op;
     }
+    case OP_MASKED_FILL: {
+      Op *op = MaskedFill::create_operator_from_layer(*this, layer, inputs);
+      operators.push_back(op);
+      return op;
+    }
     default:
       assert(false);
   }
@@ -4376,6 +4382,29 @@ void register_flexflow_internal_tasks() {
     Runtime::preregister_task_variant<MultiHeadAttention::backward_task>(
         registrar, "MultiHeadAttention Backward Task");
   }
+   // MaskedFill task
+  {
+    TaskVariantRegistrar registrar(MASKEDFILL_INIT_TASK_ID, "MaskedFill Init");
+    registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
+    registrar.set_leaf();
+    Runtime::preregister_task_variant<OpMeta *, MaskedFill::init_task>(
+        registrar, "MaskedFill Init Task");
+  }
+  {
+    TaskVariantRegistrar registrar(MASKEDFILL_FWD_TASK_ID, "MaskedFill Forward");
+    registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
+    registrar.set_leaf();
+    Runtime::preregister_task_variant<MaskedFill::forward_task>(
+        registrar, "MaskedFill Forward Task");
+  }
+  {
+    TaskVariantRegistrar registrar(MASKEDFILL_BWD_TASK_ID, "MaskedFill Backward");
+    registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
+    registrar.set_leaf();
+    Runtime::preregister_task_variant<MaskedFill::backward_task>(
+        registrar, "MaskedFill Backward Task");
+  }
+
   // NoOp
   {
     TaskVariantRegistrar registrar(NOOP_INIT_TASK_ID, "Weight NCCL Init");

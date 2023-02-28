@@ -1009,6 +1009,23 @@ flexflow_tensor_t flexflow_model_add_multihead_attention(
               name);
   return FFCObjectWrapper::wrap(tensor);
 }
+flexflow_tensor_t flexflow_model_add_masked_fill(flexflow_model_t handle_,
+                                            const flexflow_tensor_t input_,
+                                            const flexflow_tensor_t mask_,
+                                            float const value,
+                                            char const *name) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  Tensor input = FFCObjectWrapper::unwrap(input_);
+  Tensor mask = FFCObjectWrapper::unwrap(index_);
+  Tensor tensor = handle->masked_fill(input, mask, value, name);
+  DEBUG_PRINT("[MaskedFill] new Tensor %p, input %p, mask %p, dim %d name %s",
+              tensor,
+              input,
+              mask,
+              value,
+              name);
+  return FFCObjectWrapper::wrap(tensor);
+}
 
 void flexflow_model_set_sgd_optimizer(flexflow_model_t handle_,
                                       flexflow_sgd_optimizer_t optimizer_) {

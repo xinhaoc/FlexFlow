@@ -325,6 +325,12 @@ flexflow_tensor_t flexflow_model_add_scalar_sub(flexflow_model_t handle,
                                                 bool inplace,
                                                 char const *name);
 
+flexflow_tensor_t flexflow_model_add_masked_fill(flexflow_model_t handle_,
+                                            const flexflow_tensor_t input_,
+                                            const flexflow_tensor_t mask_,
+                                            float const value,
+                                            char const *name) ;                                              
+
 flexflow_tensor_t
     flexflow_model_add_scalar_truediv(flexflow_model_t handle,
                                       const flexflow_tensor_t input,

@@ -44,7 +44,18 @@ void backward_kernel_wrapper(ElementBinaryMeta const *m,
                              float const *in2_ptr,
                              float *in1_grad_ptr,
                              float *in2_grad_ptr);
-
+bool use_kernel(OperatorType type) const {
+  switch (type) {
+    case OP_EW_ADD:
+    case OP_EW_MUL:
+    case OP_EW_MAX:
+    case OP_EW_MIN:
+      break;
+    default:
+      return false;
+  }
+  return true;
+}
 namespace Internal {
 
 void forward_kernel(ElementBinaryMeta const *m,

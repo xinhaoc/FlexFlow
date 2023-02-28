@@ -936,7 +936,7 @@ class FunctionNode(Node):
         elif name.find("eq") >= 0: return EqualsNode(node)
         elif name.find("finfo") >= 0: return FinfoNode(node)
         elif name.find("tensor") >= 0: return TensorNode(node)
-        elif name.find("masked_fill") >= 0: return MaskFillNode(node)
+        elif name.find("masked_fill") >= 0: return MaskedFillNode(node)
         assert 0, f"Unknown function or method: {name}"
 
     @staticmethod
@@ -2397,10 +2397,10 @@ class TensorNode(FunctionNode):
         assert(False)
         return input_tensor
     
-class MaskFillNode(FunctionNode):
+class MaskedFillNode(FunctionNode):
     def __init__(self, node):
         super().__init__(node)
-        self.op_type = OpType.MASKFILL
+        self.op_type = OpType.MASKEDFILL
         self.assert_num_args(2, Comparator.GEQ)
 
     def parse(self):

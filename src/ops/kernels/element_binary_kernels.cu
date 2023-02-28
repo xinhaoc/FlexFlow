@@ -58,6 +58,8 @@ void init_kernel(ElementBinaryMeta *m,
     case OP_EW_MIN:
       mode = CUDNN_OP_TENSOR_MIN;
       break;
+    case OP_EW_EQUAL:
+      return;
     default:
       assert(false);
   }
@@ -119,6 +121,9 @@ void forward_kernel_wrapper(ElementBinaryMeta const *m,
       case OP_EW_MIN:
         opName = "Min";
         break;
+      case OP_EW_EQUAL:
+        opName = "Equal";
+        break;
       default:
         assert(false);
     }
@@ -177,6 +182,9 @@ void backward_kernel_wrapper(ElementBinaryMeta const *m,
       case OP_EW_MIN:
         opName = "Min";
         break;
+      case OP_EW_EQUAL:
+        opName = "Equal";
+        break;
       default:
         assert(false);
     }
@@ -227,6 +235,12 @@ __global__ void elewise_binary_forward_kernel(coord_t volume,
     case OP_EW_MIN: {
       CUDA_KERNEL_LOOP(i, volume) {
         out[i] = alpha * min(in1[i], in2[i]) + beta * out[i];
+      }
+      break;
+    }
+    case OP_EW_EQUAL: {
+      CUDA_KERNEL_LOOP(i, volume) {
+        out[i] = alpha * (in1[i] == in2[i]) + beta * out[i];
       }
       break;
     }
@@ -281,6 +295,15 @@ __global__ void elewise_binary_backward_kernel(coord_t volume,
                           ? alpha * out_grad[i] + beta * in1_grad[i]
                           : beta * in1_grad[i];
         in2_grad[i] = (in2[i] <= in1[i])
+                          ? alpha * out_grad[i] + beta * in2_grad[i]
+                          : beta * in2_grad[i];
+        break;
+      }
+      case OP_EW_EQUAL: {
+        in1_grad[i] = (in1[i] == in2[i])
+                          ? alpha * out_grad[i] + beta * in1_grad[i]
+                          : beta * in1_grad[i];
+        in2_grad[i] = (in2[i] == in1[i])
                           ? alpha * out_grad[i] + beta * in2_grad[i]
                           : beta * in2_grad[i];
         break;
@@ -378,7 +401,7 @@ void forward_kernel(ElementBinaryMeta const *m,
                                m->outputTensor,
                                out_ptr));
     }
-  } else {
+  } else if (use_kernel(op->op_type)) {
     checkCUDNN(cudnnOpTensor(m->handle.dnn,
                              m->opDesc,
                              &alpha1,
@@ -390,6 +413,12 @@ void forward_kernel(ElementBinaryMeta const *m,
                              &beta,
                              m->outputTensor,
                              out_ptr));
+  } else {
+    elewise_binary_forward_kernel<<<GET_BLOCKS(volume),
+                                    CUDA_NUM_THREADS,
+                                    0,
+                                    stream>>>(
+        volume, alpha, beta, m->op_type, in1_ptr, in2_ptr, out_ptr);
   }
 }
 
@@ -539,7 +568,8 @@ void backward_kernel(ElementBinaryMeta const *m,
                                  in2_grad_ptr));
       }
     }
-  } else if (m->op_type == OP_EW_MIN || m->op_type == OP_EW_MAX) {
+  } else if (m->op_type == OP_EW_MIN || m->op_type == OP_EW_MAX ||
+             m->op_type == OP_EW_EQUAL) {
     float alpha = 1.0f, beta = 1.0f;
     cudnnDataType_t dataType;
     int n;

@@ -38,6 +38,7 @@
 #include "flexflow/ops/split.h"
 #include "flexflow/ops/topk.h"
 #include "flexflow/ops/transpose.h"
+#include "flexflow/ops/masked_fill.h"
 #include "flexflow/parallel_ops/combine.h"
 #include "flexflow/parallel_ops/fused_parallel_op.h"
 #include "flexflow/parallel_ops/partition.h"
@@ -2645,6 +2646,10 @@ void FFModel::deserialize_graph_optimal_view(
       }
       case OP_TRANSPOSE: {
         node = Transpose::deserialize(*this, dez, inputs, num_inputs);
+        break;
+      }
+      case OP_MASKED_FILL: {
+        node = MaskedFill::deserialize(*this, dez, inputs, num_inputs);
         break;
       }
       case OP_COMBINE: {

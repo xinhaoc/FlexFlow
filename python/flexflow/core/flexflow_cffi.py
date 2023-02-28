@@ -434,6 +434,13 @@ class Reverse(Op):
 class MultiHeadAttention(Op):
   def __init__(self, handle, idx=None, name=None):
     super(MultiHeadAttention, self).__init__(handle, idx, name)
+ 
+# -----------------------------------------------------------------------
+# MaskedFill
+# -----------------------------------------------------------------------
+class MaskedFill(Op):
+  def __init__(self, handle, idx=None, name=None):
+    super(MaskedFill, self).__init__(handle, idx, name)   
 
 # -----------------------------------------------------------------------
 # flexflow_op_t handle to Op
@@ -471,6 +478,8 @@ def convert_op_handle_to_op(op_type, handle, idx=None, name=None):
     return Max(handle, idx, name)
   elif op_type == OpType.MIN:
     return Min(handle, idx, name)
+  elif op_type == OpType.EQUAL:
+        return Equal(handle, idx, name)
   elif op_type == OpType.REDUCE_SUM:
     return ReduceSum(handle, idx, name)
   elif op_type == OpType.MSELOSS:
@@ -523,6 +532,8 @@ def convert_op_handle_to_op(op_type, handle, idx=None, name=None):
     return Mean(handle, idx, name)
   elif op_type == OpType.GATHER:
     return Gather(handle, idx, name)
+  elif op_type == OpType.MASKEDFILL:
+        return MaskedFill(handle, idx, name)
   else:
     assert 0, "unknown layer type {}".format(op_type)
     return None
@@ -1115,6 +1126,28 @@ class FFModel(object):
     handle = ffc.flexflow_model_add_min(self.handle, x.handle, y.handle, inplace_a, c_name)
     self.add_layer(OpType.MIN, name)
     return Tensor(handle, owner_op_type=OpType.MIN)
+  
+  def equal(self, x, y, inplace_a=False, name=None):
+    """Layer that computes the element-wise equality`.
+             
+    :param x: the first input Tensor.
+    :type x: Tensor
+    
+    :param y: the second input Tensor.
+    :type y: Tensor
+             
+    :param name: the name of the layer. Default is None.
+    :type name: string
+
+    :returns:  Tensor -- the output tensor.
+    eg. output = equal(x,y)
+    output = tensor([[ True, False],
+        [False, True]])
+    """
+    c_name = get_c_name(name)
+    handle = ffc.flexflow_model_add_equal(self.handle, x.handle, y.handle, inplace_a, c_name)
+    self.add_layer(OpType.EQUAL, name)
+    return Tensor(handle, owner_op_type=OpType.EQUAL)
 
   def reduce_sum(self, input, axes, keepdims=False, name=None):
     """Layer that computes the sum of the input Tensor along given axes.
@@ -1902,6 +1935,28 @@ class FFModel(object):
     handle = ffc.flexflow_model_add_dropout(self.handle, input.handle, rate, seed, c_name)
     self.add_layer(OpType.DROPOUT, name)
     return Tensor(handle, owner_op_type=OpType.DROPOUT)
+  
+  def masked_fill(self, input, mask, value, name=None):
+    """Fills elements of tensor with value where mask is True.
+    
+    :param input: the input tensor
+    :type input: Tensor
+
+    :param mask: the boolean mask, True->fill, False->not fill
+    :type mask: Tensor
+
+    :param value: the filling value
+    :type dim: float
+
+    :param name: the name of the layer. Default is None
+    :type name: string
+
+    :returns: Tensor -- the output tensor
+    """
+    c_name = get_c_name(name)
+    handle = ffc.flexflow_model_add_masked_fill(self.handle, input.handle, mask.handle, value, c_name)
+    self.add_layer(OpType.MASKEDFILL, name)
+    return Tensor(handle, owner_op_type=OpType.MASKEDFILL)
     
   def multihead_attention(self, query, key, value, 
                           embed_dim, num_heads, 
