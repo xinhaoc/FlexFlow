@@ -195,6 +195,19 @@ class Node():
             return DataType.DT_INT64
         else:
             assert 0, f"Unknown dtype: {numpy_dtype}"
+            
+    @staticmethod
+    def ff_to_torch_type(ff_type):
+        if ff_type == DataType.DT_FLOAT:
+            return torch.float32
+        elif ff_type == DataType.DT_DOUBLE:
+            return torch.float64
+        elif ff_type == DataType.DT_INT32:
+            return torch.int32
+        elif ff_type == DataType.DT_INT64:
+            return torch.int64
+        else:
+            assert 0, f"Unknown dtype: {ff_type}"
 
 
 class ModuleNode(Node):
@@ -240,8 +253,10 @@ class ModuleNode(Node):
             return GeluMNode(node, module)
         elif isinstance(module, torch.nn.Embedding):
             return EmbeddingNode(node, module)
-        # else:
-        #     assert 0, f"Unknown module: {module}"
+        else:
+            print("-----no such module------")
+            print(module)
+            # assert 0, f"Unknown module: {module}"
 
 
 class LinearNode(ModuleNode):
@@ -933,7 +948,7 @@ class FunctionNode(Node):
         elif name.find("tanh") >= 0: return TanhFNode(node)
         elif name.find("gelu") >= 0: return GeluFNode(node)
         elif name.find("size") >= 0: return SizeNode(node) 
-        elif name.find("eq") >= 0: return EqualsNode(node)
+        elif name.find("eq") >= 0: return EqualNode(node)
         elif name.find("finfo") >= 0: return FinfoNode(node)
         elif name.find("tensor") >= 0: return TensorNode(node)
         elif name.find("masked_fill") >= 0: return MaskedFillNode(node)
@@ -1411,7 +1426,11 @@ class GetItemNode(FunctionNode):
             )
 
     def to_ff(self, ffmodel, node_to_output):
+        print("--------get item--------")
+        print(self.innodes[0])
+        print(self.innodes[1])
         input_tensor = node_to_output[self.innodes[0].name]
+        print(input_tensor)
         if type(input_tensor) is Tensor:
             slices = self.innodes[1]
             assert type(slices) is tuple
@@ -1447,6 +1466,8 @@ class GetItemNode(FunctionNode):
             return isinstance(slice_elem, int)
         
         def parse_slice_element(slice_elem):
+            if isinstance(slice_elem, int):
+                return slice_elem
             start = FunctionNode.parse_node(slice_elem.start, node_to_output)
             stop = FunctionNode.parse_node(slice_elem.stop, node_to_output)
             step = FunctionNode.parse_node(slice_elem.step, node_to_output)
@@ -1676,12 +1697,21 @@ class GetAttrNode(FunctionNode):
             return getattr(input_tensor, attr)
 
     def to_ff(self, ffmodel, node_to_output):
-        input_tensor = node_to_output[self.innodes[0].name]
+        input = node_to_output[self.innodes[0].name]
+        print("------attr input")
+        print(input)
         attr = self.innodes[1]
         if attr == "shape":
-            return input_tensor.dims
+            assert(isinstance(input, Tensor))
+            return input.dims
+        elif attr == "dtype":
+            assert(isinstance(input, Tensor))
+            return input.data_type
+        elif attr == "max" or attr == "min":
+            assert(isinstance(input, torch.finfo))
+            return input.max if attr == "max" else input.min
         else:
-            return getattr(input_tensor, attr)
+            return getattr(input, attr)
 
 
 class TransposeNode(FunctionNode):
@@ -1948,11 +1978,24 @@ class ViewNode(FunctionNode):
         return ffmodel.reshape(input=input_tensor, shape=shape, name=name)
 
     def to_ff(self, ffmodel, node_to_output):
+        print("------view node------")
+        """
+        no need for labels
+        """
+        if self.innodes[0].name == 'labels':
+            return
+        
         input_tensor = node_to_output[self.innodes[0].name]
         view_shape = self.innodes[1:]
         view_shape_list = []
-        for dim, dim_size in enumerate(view_shape):
-            view_shape_list.append(int(FunctionNode.parse_node(dim_size, node_to_output)))
+        for i, dim in enumerate(view_shape):
+            if(isinstance(dim, tuple)):
+                for i, sub_dim in enumerate(dim):
+                    view_shape_list.append(int(FunctionNode.parse_node(sub_dim, node_to_output)))
+            else:
+                view_shape_list.append(int(FunctionNode.parse_node(dim, node_to_output)))
+        print("---view shape----")
+        print(view_shape_list)
         shape = FunctionNode.get_view_shape(input_tensor, view_shape_list)
         # Treat as a special case of `reshape()`
         return ffmodel.reshape(
@@ -2317,10 +2360,10 @@ class SizeNode(FunctionNode):
             dims = input_tensor.dims
         return dims
     
-class EqualsNode(FunctionNode):
+class EqualNode(FunctionNode):
     def __init__(self, node):
         super().__init__(node)
-        self.op_type = OpType.EQUALS
+        self.op_type = OpType.EQUAL
         self.assert_num_args(2, Comparator.EQ)
 
     def parse(self):
@@ -2342,10 +2385,15 @@ class EqualsNode(FunctionNode):
     def to_ff(self, ffmodel, node_to_output):
         input_tensor = node_to_output[self.innodes[0].name]
         print("-------eq node---------")
-        print(input_tensor.dims)
-        print(self.innodes[1])
-        assert(False)
-        return input_tensor
+        
+        #create a tensor for equal
+        np_tensor = np.empty(input_tensor.dims, dtype=np.float32)
+        np_tensor.fill(self.innodes[1])
+        ff_tensor = ffmodel.create_tensor(
+            input_tensor.dims, DataType.DT_FLOAT,
+        )
+        # ff_tensor.set_tensor(ffmodel, np_tensor)
+        return ffmodel.equal(x=input_tensor, y=ff_tensor, name=self.name)
     
 class FinfoNode(FunctionNode):
     def __init__(self, node):
@@ -2368,10 +2416,7 @@ class FinfoNode(FunctionNode):
 
     def to_ff(self, ffmodel, node_to_output):
         input = node_to_output[self.innodes[0].name]
-        print("------finfo--------")
-        print(input)
-        assert(isinstance(input, torch.dtype))
-        return torch.finfo(input)
+        return torch.finfo(Node.ff_to_torch_type(input))
 class TensorNode(FunctionNode):
     def __init__(self, node):
         super().__init__(node)
@@ -2392,9 +2437,8 @@ class TensorNode(FunctionNode):
         return input_tensor
 
     def to_ff(self, ffmodel, node_to_output):
+        #todo may support real tensor in future, now just scalar
         input_tensor = node_to_output[self.innodes[0].name]
-        print(input_tensor.shape)
-        assert(False)
         return input_tensor
     
 class MaskedFillNode(FunctionNode):
@@ -2418,9 +2462,13 @@ class MaskedFillNode(FunctionNode):
 
     def to_ff(self, ffmodel, node_to_output):
         input_tensor = node_to_output[self.innodes[0].name]
-        print(input_tensor.shape)
-        assert(False)
-        return input_tensor
+        mask_tensor = node_to_output[self.innodes[1].name]
+        value = node_to_output[self.innodes[2].name]
+        print("------maskedfill--------")
+        return ffmodel.masked_fill(input=input_tensor,
+                                   mask = mask_tensor,
+                                   value = value,
+                                   name = self.name)
     
     
 
@@ -2551,26 +2599,29 @@ class OutputNode(Node):
             output_tensors[:] += [node_to_output[other]]
 
     def to_ff(self, ffmodel, node_to_output, output_tensors):
+        print("------output-------")
         for other in self.innodes:
             # Destructively modify `output_tensors`
             if type(other) is immutable_dict:
-                assert "last_hidden_state" in other or "logits" in other
-                # NOTE: This case targets MT5Model
-                if "last_hidden_state" in other:
-                    output_tensors[:] += \
-                        [node_to_output[other["last_hidden_state"].name]]
-                # NOTE: This case targets MT5ForConditionalGeneration
-                elif "logits" in other:
-                    # NOTE: Manually add a softmax layer since the model is
-                    # traced from PyTorch, which includes the softmax in its
-                    # `CrossEntropyLoss()` implementation
-                    logits = node_to_output[other["logits"].name]
-                    softmax_logits = ffmodel.softmax(
-                        input=logits, name=self.name,
-                    )
-                    output_tensors[:] += [softmax_logits]
-            else:
-                output_tensors[:] += [node_to_output[other.name]]
+                  output_tensor = [node_to_output[other["logits"].name]]
+                  print(output_tensor[0].dims)
+            #     assert "last_hidden_state" in other or "logits" in other
+            #     # NOTE: This case targets MT5Model
+            #     if "last_hidden_state" in other:
+            #         output_tensors[:] += \
+            #             [node_to_output[other["last_hidden_state"].name]]
+            #     # NOTE: This case targets MT5ForConditionalGeneration
+            #     elif "logits" in other:
+            #         # NOTE: Manually add a softmax layer since the model is
+            #         # traced from PyTorch, which includes the softmax in its
+            #         # `CrossEntropyLoss()` implementation
+            #         logits = node_to_output[other["logits"].name]
+            #         softmax_logits = ffmodel.softmax(
+            #             input=logits, name=self.name,
+            #         )
+            #         output_tensors[:] += [softmax_logits]
+            # else:
+            #     output_tensors[:] += [node_to_output[other.name]]
 
 
 class PyTorchModel():
@@ -2597,9 +2648,7 @@ class PyTorchModel():
             ) 
         else:
             traced = torch.fx.symbolic_trace(self.model)
-            
-        print("--------model-----------")
-        print(traced.code)
+        
 
         # Convert the fx graph to an internal graph representation
         name_to_module = {}
@@ -2621,7 +2670,9 @@ class PyTorchModel():
                 node = OutputNode(fx_node)
             else:
                 assert 0, f"Unknown operator type: {fx_node.op}"
-            graph.append(node)
+            
+            if node is not None:
+                graph.append(node)
 
         # For non-HuggingFace model
         if not self.is_hf_model:
@@ -2680,13 +2731,16 @@ class PyTorchModel():
         for node in graph:
             if verbose:
                 print("---verbose---")
-                print(f"{node.ir_string}")
+                # print(f"{node.ir_string}")
             if isinstance(node, InputNode):
                 node_output = node.to_ff(input_tensors, input_index)
                 input_index += 1
             elif isinstance(node, OutputNode):
                 node.to_ff(ffmodel, node_to_output, output_tensors)
                 node_output = None
+            elif node is None:
+                print("---sdd---")
+                continue
             else:
                 node_output = node.to_ff(ffmodel, node_to_output)
 

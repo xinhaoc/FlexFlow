@@ -695,6 +695,12 @@ Node Graph::find_sink_node() const {
   using FlexFlow::PCG::Utils::leaves;
 
   std::unordered_set<Node> sink_nodes = leaves(*this);
+
+  fprintf(stderr, "print sink nodes\n");
+  for (auto& it: sink_nodes) {
+      fprintf(stderr, "%s\n", it.to_string().c_str());
+  }
+  
   assert(sink_nodes.size() == 1);
 
   return *sink_nodes.begin();

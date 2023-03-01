@@ -401,7 +401,7 @@ void forward_kernel(ElementBinaryMeta const *m,
                                m->outputTensor,
                                out_ptr));
     }
-  } else if (use_kernel(op->op_type)) {
+  } else if (m->op_type == OP_EW_EQUAL) {
     checkCUDNN(cudnnOpTensor(m->handle.dnn,
                              m->opDesc,
                              &alpha1,
@@ -414,6 +414,17 @@ void forward_kernel(ElementBinaryMeta const *m,
                              m->outputTensor,
                              out_ptr));
   } else {
+    float alpha = 1.0f, beta = 1.0f;
+    cudnnDataType_t dataType;
+    int dims[MAX_TENSOR_DIM];
+    int n;
+    int strides[MAX_TENSOR_DIM];
+    checkCUDNN(cudnnGetTensorNdDescriptor(
+        m->outputTensor, MAX_TENSOR_DIM, &dataType, &n, dims, strides));
+    size_t volume = 1;
+    for (int i = 0; i < n; i++) {
+      volume *= dims[i];
+    }
     elewise_binary_forward_kernel<<<GET_BLOCKS(volume),
                                     CUDA_NUM_THREADS,
                                     0,

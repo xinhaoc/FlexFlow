@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 
-#include "flexflow/ops/masked_fill.h"
 #include "flexflow/ops/kernels/masked_fill_kernels.h"
+#include "flexflow/ops/masked_fill.h"
 #include "flexflow/utils/cuda_helper.h"
 
 namespace FlexFlow {
@@ -45,13 +45,14 @@ void forward_kernel_wrapper(MaskedFillMeta const *m,
   }
   float filled_value = m->filled_value;
   if (mask.data_type == DT_INT32) {
-     Internal::forward_kernel(input.get_float_ptr(),
+    
+    Internal::forward_kernel(input.get_float_ptr(),
                              mask.get_int32_ptr(),
                              output.get_float_ptr(),
-                             output.domain.get_volume(),
                              filled_value,
+                             output.domain.get_volume(),
                              stream);
-  } 
+  }
   if (m->profiling) {
     cudaEventRecord(t_end, stream);
     checkCUDA(cudaEventSynchronize(t_end));
@@ -60,7 +61,7 @@ void forward_kernel_wrapper(MaskedFillMeta const *m,
     cudaEventDestroy(t_start);
     cudaEventDestroy(t_end);
     log_measure.debug(
-        "%s [MaskedFill] forward time = %.2fms\n", m->op_name, elapsed);
+        "%s [MaskedFill] forward time = %.2fms\n", "masked_fill", elapsed);
   }
 }
 
@@ -75,63 +76,59 @@ void backward_kernel_wrapper(MaskedFillMeta const *m,
     Internal::backward_kernel(output_grad.get_float_ptr(),
                               mask.get_int32_ptr(),
                               input_grad.get_float_ptr(),
-                              output_grad.domain.get_volume(),
                               filled_value,
+                              output_grad.domain.get_volume(),
                               stream);
   }
 }
 
 namespace Internal {
 
-template <typename IndexType>
 __global__ void masked_fill_forward(float const *input,
-                               IndexType const *mask,
-                               float *output,
-                               float value) {
+                                    int const *mask,
+                                    float *output,
+                                    size_t output_size,
+                                    float value) {
   CUDA_KERNEL_LOOP(i, output_size) {
     output[i] = mask[i] == 0 ? input[i] : value;
   }
 }
 
-template <typename IndexType>
 void forward_kernel(float const *input_ptr,
-                    IndexType const *mask_ptr,
+                    int const *mask_ptr,
                     float *output_ptr,
                     float filled_value,
+                    size_t output_size,
                     cudaStream_t stream) {
   assert(input_ptr != nullptr);
   assert(mask_ptr != nullptr);
   assert(output_ptr != nullptr);
-  masked_fill_forward<IndexType>
-      <<<GET_BLOCKS(output_size), CUDA_NUM_THREADS, 0, stream>>>(
-          input_ptr, mask_ptr, output_ptr, filled_value);
+  masked_fill_forward<<<GET_BLOCKS(output_size), CUDA_NUM_THREADS, 0, stream>>>(
+      input_ptr, mask_ptr, output_ptr, output_size, filled_value);
 }
 
-template <typename IndexType>
+
 __global__ void masked_fill_backward(float const *output_grad,
-                                IndexType const *mask,
-                                float *input_grad,
-                                float filled_value) {
+                                     int const *mask,
+                                     float *input_grad,
+                                     size_t output_size,
+                                     float filled_value) {
   CUDA_KERNEL_LOOP(i, output_size) {
-    input_grad[i] = mask[i] == 0 ? input_grad[i] : filled_value
+    input_grad[i] = mask[i] == 0 ? input_grad[i] : filled_value;
   }
 }
 
-template <typename IndexType>
 void backward_kernel(float const *output_grad_ptr,
-                     IndexType const *mask_ptr,
+                     int const *mask_ptr,
                      float *input_grad_ptr,
                      float filled_value,
+                     size_t output_size,
                      cudaStream_t stream) {
   assert(output_grad_ptr != nullptr);
   assert(input_grad_ptr != nullptr);
   assert(mask_ptr != nullptr);
-  masked_fill_backward<IndexType>
-      <<<GET_BLOCKS(output_size), CUDA_NUM_THREADS, 0, stream>>>(
-          output_grad_ptr,
-          mask_ptr,
-          input_grad_ptr,
-          filled_value);
+  masked_fill_backward<<<GET_BLOCKS(output_size), CUDA_NUM_THREADS, 0, stream>>>(
+          output_grad_ptr, mask_ptr, input_grad_ptr,output_size, filled_value);
 }
 
 } // namespace Internal

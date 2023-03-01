@@ -562,7 +562,6 @@ public:
   Tensor masked_fill(const Tensor input,
              const Tensor mask,
              float value, 
-             bool inplace_a = false,
              char const *name = NULL);
   Tensor create_tensor_legion_ordering(int num_dim,
                                        int const dims[],
@@ -893,7 +892,7 @@ public:
           ElementBinary *>,
       std::unordered_map<
           std::pair<std::pair<ParallelTensorShape, ParallelTensorShape>,
-                    MaskedFilledParams>,
+                    MaskedFillParams>,
           MaskedFill *>,
       std::unordered_map<std::pair<ParallelTensorShape, ElementUnaryParams>,
                          ElementUnary *>,

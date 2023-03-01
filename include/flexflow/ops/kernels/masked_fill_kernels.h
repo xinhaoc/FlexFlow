@@ -29,21 +29,17 @@ void backward_kernel_wrapper(MaskedFillMeta const *m,
                              GenericTensorAccessorR const &mask,
                              GenericTensorAccessorW const &input_grad);
 namespace Internal {
-template <typename IndexType>
 void forward_kernel(float const *input_ptr,
-                    IndexType const *index_ptr,
+                    int const *index_ptr,
                     float *output_ptr,
-                    Legion::coord_t output_size,
-                    Legion::coord_t stride,
-                    Legion::coord_t dim_size,
+                    float value,
+                    size_t output_size,
                     ffStream_t stream);
-template <typename IndexType>
 void backward_kernel(float const *output_grad_ptr,
-                     IndexType const *index_ptr,
+                     int const *index_ptr,
                      float *input_grad_ptr,
-                     Legion::coord_t output_size,
-                     Legion::coord_t stride,
-                     Legion::coord_t dim_size,
+                     float value,
+                     size_t output_size,
                      ffStream_t stream);
 } // namespace Internal
 } // namespace MaskedFill

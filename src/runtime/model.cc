@@ -50,7 +50,6 @@
 #include "flexflow/ops/split.h"
 #include "flexflow/ops/topk.h"
 #include "flexflow/ops/transpose.h"
-#include "flexflow/ops/comparison.h"
 #include "flexflow/ops/masked_fill.h"
 #include "flexflow/parallel_ops/combine.h"
 #include "flexflow/parallel_ops/fused_parallel_op.h"

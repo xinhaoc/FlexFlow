@@ -17,7 +17,7 @@ public:
   MaskedFill(FFModel &model,
          const ParallelTensor input,
          const ParallelTensor mask,
-         int legion_dim,
+         float _filled_value,
          char const *name = nullptr);
   void init(FFModel const &) override;
   void forward(FFModel const &) override;

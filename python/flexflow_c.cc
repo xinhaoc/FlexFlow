@@ -1016,9 +1016,9 @@ flexflow_tensor_t flexflow_model_add_masked_fill(flexflow_model_t handle_,
                                             char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
   Tensor input = FFCObjectWrapper::unwrap(input_);
-  Tensor mask = FFCObjectWrapper::unwrap(index_);
+  Tensor mask = FFCObjectWrapper::unwrap(mask_);
   Tensor tensor = handle->masked_fill(input, mask, value, name);
-  DEBUG_PRINT("[MaskedFill] new Tensor %p, input %p, mask %p, dim %d name %s",
+  DEBUG_PRINT("[MaskedFill] new Tensor %p, input %p, mask %p, value %f name %s",
               tensor,
               input,
               mask,

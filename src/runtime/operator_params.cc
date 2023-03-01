@@ -112,7 +112,7 @@ tl::optional<OperatorParameters> get_op_parameters(Op const *op) {
       return ((Aggregate *)op)->get_params();
     case OP_AGG_SPEC:
       return ((AggregateSpec *)op)->get_params();
-    case OP_MASKED_FILL
+    case OP_MASKED_FILL:
       return ((MaskedFill *)op)->get_params();
 
       // TODO: implement the get_params() function for the operators below and
