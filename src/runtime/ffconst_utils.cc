@@ -89,6 +89,8 @@ std::string get_operator_type_name(OperatorType type) {
       return "Max";
     case OP_EW_MIN:
       return "Min";
+    case OP_RMS_NORM:
+      return "RMSNorm";
     case OP_REDUCE_ARGMAX:
       return "ReduceArgMax";
     case OP_REDUCE_ARGMIN:

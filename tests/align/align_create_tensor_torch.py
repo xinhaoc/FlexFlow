@@ -76,6 +76,8 @@ def create_single_operator_torch():
         label, output = create_tensors_for_min_torch()
     elif operator_name == 'gather':
         label, output = create_tensors_for_gather_torch()
+    elif operator_name == 'rms_norm':
+         label, output = create_tensors_for_rms_norm_torch()   
     else:
         raise ValueError('Not Include such Operator in Aligment Test ', operator_name)
 
@@ -572,6 +574,26 @@ def create_tensors_for_gather_torch():
         index=index,
         dim=0
     ).to(DEVICE)
+    output.requires_grad = True
+    return label, output
+
+def create_tensors_for_rms_norm_torch():
+    #patial from https://github.com/facebookresearch/llama/blob/main/llama/model.py
+    HIDDEN_SIZE = 512
+    EPS = 1e-6
+
+    inp: torch.Tensor = gen_tensor(
+        (BATCH_SIZE, SEQ_LENGTH, HIDDEN_SIZE),
+        dtype="float32",
+    ).to(DEVICE)
+    label: torch.Tensor = gen_tensor(
+        (BATCH_SIZE, SEQ_LENGTH, HIDDEN_SIZE),
+        dtype="float32",
+    ).to(DEVICE)
+    
+    output = inp * torch.rsqrt(inp.pow(2).mean(-1, keepdim=True) + EPS)
+    #TODO, WEIGHT DIM
+    # output = output * torch.ones(dim)
     output.requires_grad = True
     return label, output
 

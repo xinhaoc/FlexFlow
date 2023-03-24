@@ -115,6 +115,9 @@ def create_single_operator_ff():
     elif operator_name == 'gather':
         input_tensors, label, output_tensor = create_tensors_for_gather_ff(
             ffmodel)
+    elif operator_name == 'rms_norm':
+        input_tensors, label, output_tensor = create_tensors_for_rms_norm_ff(
+            ffmodel)
     else:
         raise ValueError(
             'Not include such Operator in Aligment Test', operator_name)
@@ -665,7 +668,25 @@ def create_tensors_for_gather_ff(ffmodel):
     )
     return ((input_tensor, inp1),(index_tensor, index)), label, output_tensor
 
+def create_tensors_for_rms_norm_ff(ffmodel):
+    HIDDEN_SIZE = 512
+    EPS = 1e-6
+    inp: torch.Tensor = gen_tensor(
+        (BATCH_SIZE, SEQ_LENGTH, HIDDEN_SIZE),
+        dtype="float32",
+    )
+    label: torch.Tensor = gen_tensor(
+        (BATCH_SIZE, SEQ_LENGTH, HIDDEN_SIZE),
+        dtype="float32",
+    )
 
+    input_tensor = ffmodel.create_tensor(inp.shape, DataType.DT_FLOAT)
+    output_tensor = ffmodel.rms_norm(
+        input=input_tensor,
+        eps=EPS,
+        name="rmsnorm",
+    )
+    return ((input_tensor, inp),), label, output_tensor
 
 
 if __name__ == "__main__":

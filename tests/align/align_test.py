@@ -127,6 +127,9 @@ def test_linear():
     
 def test_gather():
     _test_operator('gather')
+    
+def test_rms_norm():
+    _test_operator('rms_norm')
 
 
 def _test_operator(operater_name):
