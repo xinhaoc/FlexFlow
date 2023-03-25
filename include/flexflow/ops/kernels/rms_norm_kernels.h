@@ -8,7 +8,7 @@
 
 namespace FlexFlow {
 
-class Gather;
+class RMSNorm;
 
 class RMSNormMeta : public OpMeta {
 public:
@@ -16,6 +16,7 @@ public:
 
 public:
   float eps;
+  float *mean_ptr;
   char op_name[MAX_OPNAME];
 };
 
@@ -34,16 +35,10 @@ namespace Internal {
 void forward_kernel(float const *input_ptr,
                     float const *weight_ptr,
                     float *output_ptr,
-                    Legion::coord_t output_size,
-                    Legion::coord_t stride,
-                    Legion::coord_t dim_size,
                     ffStream_t stream);
 void backward_kernel(float const *output_grad_ptr,
                      float const *weight_ptr,
                      float *input_grad_ptr,
-                     Legion::coord_t output_size,
-                     Legion::coord_t stride,
-                     Legion::coord_t dim_size,
                      ffStream_t stream);
 } // namespace Internal
 } // namespace RMSNorm

@@ -209,9 +209,6 @@ void RMSNorm::forward_task(Task const *task,
   GenericTensorAccessorW output = helperGetGenericTensorAccessorWO(
       m->output_type[0], regions[2], task->regions[2], FID_DATA, ctx, runtime);
   forward_kernel_wrapper(m, input, index, output);
-
-  //   RMSNorm::forward_kernel_wrapper<float>(
-  //       m, in_ptr, out_ptr, gamma_ptr, beta_ptr);
 }
 
 void RMSNorm::backward(FFModel const &ff) {
@@ -308,9 +305,9 @@ bool RMSNorm::measure_operator_cost(Simulator *sim,
   assert(out_ptr != NULL);
   cost_metrics.outputs_memory += cost_metrics.total_mem_diff_from(sim->offset);
 
-  //   // FIXME weight_ptr
-  //   void *weight_ptr = sim->allocate(sub_output.get_volume(),
-  //   outputs[0]->data_type);
+  // FIXME weight_ptr
+  void *weight_ptr = sim->allocate(sub_output.get_volume(), outputs[0]->data_type);
+  cost_metrics.outputs_memory += cost_metrics.total_mem_diff_from(sim->offset);
 
   bool out_of_memory = (in_ptr == NULL) || (out_ptr == NULL);
   if (out_of_memory) {
@@ -321,7 +318,7 @@ bool RMSNorm::measure_operator_cost(Simulator *sim,
 
   std::function<void()> forward, backward;
   forward = [&] {
-    forward_kernel_wrapper(m, in_ptr, out_ptr, gamma_ptr, beta_ptr);
+    forward_kernel_wrapper(m, in_ptr, out_ptr, weight_ptr);
   };
 
   if (sim->computationMode == COMP_MODE_TRAINING) {
@@ -335,11 +332,11 @@ bool RMSNorm::measure_operator_cost(Simulator *sim,
     cost_metrics.outputs_memory +=
         cost_metrics.total_mem_diff_from(sim->offset);
 
-    float *gamma_grad_ptr = NULL, *beta_grad_ptr = NULL;
+    float *weight_ptr = NULL;
+    weight_ptr = sim->allocate(sub_output.get_volume(), outputs[0]->data_type);
+    cost_metrics.outputs_memory += cost_metrics.total_mem_diff_from(sim->offset);
 
-    out_of_memory = (in_grad_ptr == NULL) || (out_grad_ptr == NULL) ||
-                    (((gamma_grad_ptr == NULL) || (beta_grad_ptr == NULL)) &&
-                     (m->elementwise_affine));
+    out_of_memory = (in_grad_ptr == NULL) || (out_grad_ptr == NULL) || (weight_ptr == NULL));
     if (out_of_memory) {
       cost_metrics.forward_time = Simulator::MAXIMUM_TASK_RUN_TIME;
       cost_metrics.backward_time = Simulator::MAXIMUM_TASK_RUN_TIME;
@@ -351,9 +348,7 @@ bool RMSNorm::measure_operator_cost(Simulator *sim,
                                      out_grad_ptr,
                                      in_ptr,
                                      in_grad_ptr,
-                                     gamma_ptr,
-                                     gamma_grad_ptr,
-                                     beta_grad_ptr);
+                                     weight_ptr);
     };
   }
 
@@ -401,7 +396,7 @@ Node RMSNorm::deserialize(FFModel &ff,
   return ff.get_or_create_node<RMSNorm>(inputs[0], params);
 }
 
-Op *LayerNorm::materialize(FFModel &ff,
+Op *RMSNorm::materialize(FFModel &ff,
                            ParallelTensor inputs[],
                            int num_inputs) const {
   RMSParams params = get_params();
