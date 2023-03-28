@@ -26,6 +26,7 @@ void forward_kernel_wrapper(RMSNormMeta const *m,
                             GenericTensorAccessorR const &input,
                             GenericTensorAccessorW const &output,
                             GenericTensorAccessorR const &weight);
+                            
 void backward_kernel_wrapper(RMSNormMeta const *m,
                              GenericTensorAccessorR const &output_grad,
                              GenericTensorAccessorR const &weight,

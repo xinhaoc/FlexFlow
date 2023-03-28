@@ -15,6 +15,8 @@
 
 #include "flexflow/ops/rms_norm.h"
 #include "flexflow/model.h"
+#include "flexflow/ops/kernels/rms_norm_kernels.h"
+#include "flexflow/ops/rms_norm_params.h"
 
 namespace FlexFlow {
 
@@ -24,14 +26,16 @@ using Legion::Context;
 using Legion::Domain;
 using Legion::FutureMap;
 using Legion::IndexLauncher;
+using Legion::PhysicalRegion;
 using Legion::Predicate;
 using Legion::RegionRequirement;
 using Legion::Runtime;
+using Legion::Task;
 using Legion::TaskArgument;
 using Legion::TaskLauncher;
 
 bool operator==(RMSNormParams const &lhs, RMSNormParams const &rhs) {
-  return lhs.layer_guid == rhs.layer_guid && lhs.eps = rhs.eps;
+  return lhs.layer_guid == rhs.layer_guid && lhs.eps == rhs.eps;
 }
 
 bool RMSNormParams::is_valid(ParallelTensorShape const &input) const {
@@ -66,8 +70,8 @@ Tensor FFModel::rms_norm(const Tensor input, float eps, char const *name) {
                                                  true /*create_grad*/,
                                                  nullptr,
                                                  CHOSEN_SYNC_TYPE);
-  ln->add_float_property("eps", eps);
-  layers.push_back(bm);
+  rm->add_float_property("eps", eps);
+  layers.push_back(rm);
   return rm->outputs[0];
 }
 
@@ -76,7 +80,7 @@ Op *RMSNorm::create_operator_from_layer(
     Layer const *layer,
     std::vector<ParallelTensor> const &inputs) {
   float eps;
-  layer->get_int_property("eps", eps);
+  layer->get_float_property("eps", eps);
   return new RMSNorm(model, layer->layer_guid, inputs[0], eps, layer->name);
 }
 
@@ -87,27 +91,28 @@ RMSNorm::RMSNorm(FFModel &model,
                  char const *name)
     : Op(model,
          OP_RMS_NORM,
-         input->data_type,
+         _input->data_type,
          name,
          1 /*inputs*/,
          1 /*weights*/,
          1 /*outputs*/,
-         input),
+         _input),
+      eps(_eps)
 {
-
+  layer_guid = _layer_guid;
   // output has the same parallel dims as input
   ParallelDim dims[MAX_TENSOR_DIM];
-  for (int i = 0; i < input->num_dims; i++) {
-    dims[i] = input->dims[i];
+  for (int i = 0; i < _input->num_dims; i++) {
+    dims[i] = _input->dims[i];
   }
   outputs[0] = model.create_parallel_tensor_legion_ordering(
-      input->num_dims, dims, input->data_type, this);
+      _input->num_dims, dims, _input->data_type, this);
   // weights
   Initializer *kernel_initializer = new GlorotUniform(std::rand() /*seed*/);
   weights[0] =
-      model.create_parallel_weight_legion_ordering(input->num_dims,
+      model.create_parallel_weight_legion_ordering(_input->num_dims,
                                                    dims,
-                                                   input->data_type,
+                                                   _input->data_type,
                                                    this /*owner_op*/,
                                                    true /*create_grad*/,
                                                    kernel_initializer,
@@ -208,7 +213,7 @@ void RMSNorm::forward_task(Task const *task,
       m->input_type[1], regions[1], task->regions[1], FID_DATA, ctx, runtime);
   GenericTensorAccessorW output = helperGetGenericTensorAccessorWO(
       m->output_type[0], regions[2], task->regions[2], FID_DATA, ctx, runtime);
-  forward_kernel_wrapper(m, input, index, output);
+  Kernels::RMSNorm::forward_kernel_wrapper(m, input, output, index);
 }
 
 void RMSNorm::backward(FFModel const &ff) {
@@ -269,16 +274,17 @@ void RMSNorm::backward_task(Task const *task,
                             Runtime *runtime) {
   assert(regions.size() == 3);
   assert(task->regions.size() == 3);
-  RMSNormMeta const *m = *((RMSNormMeta **)task->local_args);
-  GenericTensorAccessorR output_grad = helperGetGenericTensorAccessorRO(
-      m->output_type[0], regions[0], task->regions[0], FID_DATA, ctx, runtime);
-  GenericTensorAccessorR input = helperGetGenericTensorAccessorRO(
-      m->input_type[0], regions[1], task->regions[1], FID_DATA, ctx, runtime);
-  GenericTensorAccessorW input_grad = helperGetGenericTensorAccessorRW(
-      m->input_type[0], regions[2], task->regions[2], FID_DATA, ctx, runtime);
-  GenericTensorAccessorW input_grad = helperGetGenericTensorAccessorRW(
-      m->weight_type[0], regions[3], task->regions[3], FID_DATA, ctx, runtime);
-  backward_kernel_wrapper(m, output_grad, index, input_grad);
+  // RMSNormMeta const *m = *((RMSNormMeta **)task->local_args);
+  //   // ???
+  // GenericTensorAccessorR output_grad = helperGetGenericTensorAccessorRO(
+  //     m->output_type[0], regions[0], task->regions[0], FID_DATA, ctx, runtime);
+  // GenericTensorAccessorR input = helperGetGenericTensorAccessorRO(
+  //     m->input_type[0], regions[1], task->regions[1], FID_DATA, ctx, runtime);
+  // GenericTensorAccessorW index = helperGetGenericTensorAccessorRW(
+  //     m->input_type[0], regions[2], task->regions[2], FID_DATA, ctx, runtime);
+  // GenericTensorAccessorW input_grad = helperGetGenericTensorAccessorRW(
+  //     m->weight_type[0], regions[3], task->regions[3], FID_DATA, ctx, runtime);
+  // Kernels::RMSNorm::backward_kernel_wrapper(m, output_grad, index, input_grad);
 }
 
 bool RMSNorm::measure_operator_cost(Simulator *sim,
@@ -291,7 +297,7 @@ bool RMSNorm::measure_operator_cost(Simulator *sim,
   if (!inputs[0]->get_sub_tensor(mv, sub_input)) {
     return false;
   }
-  if (!inputs[1]->get_sub_tensor(mv, sub_index)) {
+  if (!inputs[1]->get_sub_tensor(mv, sub_input)) {
     return false;
   }
   RMSNormMeta *m = new RMSNormMeta(sim->handler, this);
@@ -318,7 +324,7 @@ bool RMSNorm::measure_operator_cost(Simulator *sim,
 
   std::function<void()> forward, backward;
   forward = [&] {
-    forward_kernel_wrapper(m, in_ptr, out_ptr, weight_ptr);
+    Kernels::RMSNorm::forward_kernel_wrapper(m, in_ptr, out_ptr, weight_ptr);
   };
 
   if (sim->computationMode == COMP_MODE_TRAINING) {
@@ -333,23 +339,23 @@ bool RMSNorm::measure_operator_cost(Simulator *sim,
         cost_metrics.total_mem_diff_from(sim->offset);
 
     float *weight_ptr = NULL;
-    weight_ptr = sim->allocate(sub_output.get_volume(), outputs[0]->data_type);
+    weight_ptr = (float *)sim->allocate(sub_output.get_volume(), outputs[0]->data_type);
     cost_metrics.outputs_memory += cost_metrics.total_mem_diff_from(sim->offset);
 
-    out_of_memory = (in_grad_ptr == NULL) || (out_grad_ptr == NULL) || (weight_ptr == NULL));
+    out_of_memory = ((in_grad_ptr == NULL) || (out_grad_ptr == NULL) || (weight_ptr == NULL));
     if (out_of_memory) {
       cost_metrics.forward_time = Simulator::MAXIMUM_TASK_RUN_TIME;
       cost_metrics.backward_time = Simulator::MAXIMUM_TASK_RUN_TIME;
       return true;
     }
 
-    backward = [&] {
-      backward_kernel_wrapper<float>(m,
-                                     out_grad_ptr,
-                                     in_ptr,
-                                     in_grad_ptr,
-                                     weight_ptr);
-    };
+    // backward = [&] {
+    //   Kernels::RMSNorm::backward_kernel_wrapper<float>(m,
+    //                                  out_grad_ptr,
+    //                                  in_ptr,
+    //                                  in_grad_ptr,
+    //                                  weight_ptr);
+    // };
   }
 
   inner_measure_operator_cost(sim, forward, backward, cost_metrics);
@@ -390,7 +396,7 @@ Node RMSNorm::deserialize(FFModel &ff,
   LayerID layer_guid(id);
   dez.deserialize(eps);
 
-  RMSParams params;
+  RMSNormParams params;
   params.layer_guid = layer_guid;
   params.eps = eps;
   return ff.get_or_create_node<RMSNorm>(inputs[0], params);
@@ -399,7 +405,7 @@ Node RMSNorm::deserialize(FFModel &ff,
 Op *RMSNorm::materialize(FFModel &ff,
                            ParallelTensor inputs[],
                            int num_inputs) const {
-  RMSParams params = get_params();
+  RMSNormParams params = get_params();
   return new RMSNorm(
       ff, params, inputs[0], this->name, true /*allocate_weights*/);
 }

@@ -23,7 +23,7 @@ using Legion::coord_t;
 using Legion::Domain;
 
 RMSNormMeta::RMSNormMeta(FFHandler handler, RMSNorm const *rms)
-    : OpMeta(handler, gather) {
+    : OpMeta(handler) {
   eps = rms->eps;
   // fixme
   checkCUDA(cudaMalloc(&mean_ptr, sizeof(float) * 1000));
@@ -32,6 +32,7 @@ RMSNormMeta::RMSNormMeta(FFHandler handler, RMSNorm const *rms)
 namespace Kernels {
 namespace RMSNorm {
 // namespace Internal
+
 } // namespace RMSNorm
 } // namespace Kernels
 
