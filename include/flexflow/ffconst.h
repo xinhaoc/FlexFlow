@@ -64,6 +64,11 @@ enum InferenceMode {
   TREE_VERIFY_MODE = 2003,
 };
 
+enum LLAMAModelSize {
+  SMALL_MODEL = 3001,
+  MEDIUM_MODEL = 3002,
+};
+
 // This is consistent with TASO's OpType
 // https://github.com/jiazhihao/TASO/blob/master/include/taso/ops.h#L75-L138
 enum OperatorType {

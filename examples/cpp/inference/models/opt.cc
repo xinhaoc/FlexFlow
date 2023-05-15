@@ -14,6 +14,7 @@
  */
 
 #include "opt.h"
+#include <cmath>
 
 namespace FlexFlow {
 
@@ -79,7 +80,7 @@ void OPT::create_opt_model(FFModel &ff,
 
   int num_transformer_layers_per_stage =
       (32 + num_pipeline_stages - 1) / num_pipeline_stages;
-
+  std::cout<<"wuhu"<<std::endl;
   for (int i = 0; i < opt_config.num_hidden_layers; i++) {
     // 125m, 1.7B, ..., 175B applies layer norm BEFORE attention,
     // 350m applies layer norm AFTER attention
@@ -141,6 +142,7 @@ void OPT::create_opt_model(FFModel &ff,
         break;
       }
       case INC_DECODING_MODE: {
+        std::cout<<"wuhu1"<<std::endl;
         mha = ff.inc_multihead_self_attention(
             hidden_states,
             opt_config.hidden_size,
@@ -158,12 +160,14 @@ void OPT::create_opt_model(FFModel &ff,
             pow((opt_config.hidden_size / opt_config.num_attention_heads),
                 -0.5),
             /*qk_prod_scaling*/ false);
+            std::cout<<"wuhu2"<<std::endl;
         break;
       }
       default: {
         assert(false);
       }
     }
+    std::cout<<"wuhu3"<<std::endl;
 
     Layer *attention_layer = ff.layers.back();
     weights_layers.emplace("layers_" + std::to_string(i) + "_attention_weight",

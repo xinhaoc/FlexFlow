@@ -41,7 +41,7 @@ void LLAMA::create_llama_model(FFModel &ff,
   std::unordered_map<std::string, Layer *> weights_layers;
 
   std::cout << "print llama config: " << llama_config.input_path << "-->"
-            << llama_config.batchSize << std::endl;
+            << llama_config.max_seq_len << std::endl;
 
   Tensor input;
   {
@@ -64,7 +64,7 @@ void LLAMA::create_llama_model(FFModel &ff,
   int num_transformer_layers_per_stage =
       (32 + num_pipeline_stages - 1) / num_pipeline_stages;
 
-  for (int i = 0; i < 1; i++) {
+  for (int i = 0; i < llama_config.n_layers; i++) {
     // step 1: attention
     std::vector<int> axes = {2};
     Tensor att_norm =
@@ -170,7 +170,7 @@ void LLAMA::create_llama_model(FFModel &ff,
   }
   // final normalization and linear
   std::vector<int> axes = {2};
-  token = ff.rms_norm(token, 1e-6, 4096);
+  token = ff.rms_norm(token, llama_config.norm_eps, llama_config.dim);
   Layer *final_norm = ff.layers.back();
   weights_layers.emplace("norm_weight", final_norm);
 

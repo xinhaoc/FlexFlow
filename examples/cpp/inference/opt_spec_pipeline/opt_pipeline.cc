@@ -47,143 +47,45 @@ void FlexFlow::top_level_task(Task const *task,
   std::vector<BatchConfig::TokenId> prompt = {
       2, 5625, 16, 10, 2721, 183, 8, 38, 236};
   rm.register_new_request(prompt, opt_config.sentence_len);
-
-  FFModel beam_model(ffconfig), tree_model(ffconfig);
-  OPT::create_opt_model(beam_model, im, opt_config, 1, BEAM_SEARCH_MODE);
-  OPT::create_opt_model(tree_model, im, opt_config, 1, TREE_VERIFY_MODE);
-
+  
+  std::cout<<"regist"<<std::endl;
+  FFModel inc_model(ffconfig);
+  OPT::create_opt_model(inc_model, im, opt_config, 1, INC_DECODING_MODE);
+  std::cout<<"model create"<<std::endl;
   // entry---------------------------
   int depth = 0;
-  std::map<int, Future> beam_future_handlers, tree_future_handler;
-  std::map<int, BeamSearchBatchConfig> beam_batch_configs;
-  std::map<int, TreeVerifyBatchConfig> tree_batch_configs;
-
-  bool new_req = true;
-  TreeVerifyBatchConfig tree_bc;
-
-  int iteration = 0;
-
-  while (depth < opt_config.max_beam_depth) {
+  std::map<int, Future> future_handlers;
+  std::map<int, BatchConfig> batch_configs;
+  int sentence_length = 0;
+  while (true) {
     int bid = 0;
-    if (beam_future_handlers.find(bid) == beam_future_handlers.end()) {
-      BeamSearchBatchConfig bc;
+    if (future_handlers.find(bid) == future_handlers.end()) {
+      BatchConfig bc;
       InferenceResult ir;
-      bc = rm.prepare_next_batch_init(tree_bc, ir);
-
-      std::cout << "sub_requests: " << bc.sub_requests[0] << "\n";
-      FutureMap fm = im.inference(&beam_model, bid, bc);
+      
+      bc = rm.prepare_next_batch(bc, ir);
+      std::cout<<"prepare batch"<<std::endl;
+      FutureMap fm = im.inference(&inc_model, bid, bc);
       assert(fm.get_future_map_domain().get_volume() == 1);
-      beam_future_handlers[bid] = fm.get_future(0);
-      beam_batch_configs[bid] = bc;
+      future_handlers[bid] = fm.get_future(0);
+      batch_configs[bid] = bc;
     } else {
-      // have luanched this bid
-      Future future = beam_future_handlers[bid];
+      Future future = future_handlers[bid];
       if (!future.is_ready(true /*subscribe*/)) {
         continue;
       } else {
         std::cout << "future is ready...." << std::endl;
       }
       // process end
-      BeamInferenceResult ir = future.get_result<BeamInferenceResult>();
-      BeamSearchBatchConfig bc = beam_batch_configs[bid];
-      depth = bc.beamRequestsInfo[0].current_depth;
-      bc = rm.prepare_next_batch_beam(bc, ir);
-
-      std::cout << "opt current depth: " << depth << std::endl;
-      std::cout << "sub_requests: " << bc.sub_requests[0] << "\n";
-      FutureMap fm = im.inference(&beam_model, bid, bc);
+      InferenceResult ir = future.get_result<InferenceResult>();
+      BatchConfig bc = batch_configs[bid];
+      bc = rm.prepare_next_batch(bc, ir);
+      sentence_length += bc.num_tokens;
+      FutureMap fm = im.inference(&inc_model, bid, bc);
       assert(fm.get_future_map_domain().get_volume() == 1);
-      beam_future_handlers[bid] = fm.get_future(0);
-      beam_batch_configs[bid] = bc;
-
-      // tranverse the tree in dfs order;
-      if (depth >= opt_config.max_beam_depth) {
-
-        printf("\n\n ------Final Beam Search Batch------\n");
-        printf("[Beam] num_tokens: %d\n", bc.num_tokens);
-        for (int i = 0; i < bc.num_tokens; i++) {
-          std::cout << "[Token] Request Index: "
-                    << bc.tokensInfo[i].request_index
-                    << ", Abs Depth: " << bc.tokensInfo[i].abs_depth_in_request
-                    << ", Token Id: " << bc.tokensInfo[i].token_id << "\n";
-        }
-
-        // printf("\n\n prepare tree_bc from final beam search bc\n");
-        tree_bc = rm.prepare_next_batch_verify(bc);
-
-        printf("\n\n\n ------Tree Verify Batch-------\n");
-        // should have the same content as the hardcoded verification block
-        // below right now, it only contains the prompt need to add in the beam
-        // search result
-
-        printf("[Verify] num_tokens : %d\n", tree_bc.num_tokens);
-        printf("[Verify] num_tokens_in_batch: %d\n",
-               tree_bc.requestsInfo[0].num_tokens_in_batch);
-        printf("------------------------------\n");
-
-        for (int i = 0; i < tree_bc.num_tokens; i++) {
-          std::cout << "[Token] Request Index: "
-                    << tree_bc.tokensInfo[i].request_index << ", Abs Depth: "
-                    << tree_bc.tokensInfo[i].abs_depth_in_request
-                    << ", Token Id: " << tree_bc.tokensInfo[i].token_id << "\n";
-        }
-
-        printf("\n\n ------Commit Verified Tokens-------\n");
-        for (int i = 0; i < tree_bc.num_tokens_to_commit; i++) {
-          std::cout << "[Commit] Request Index: "
-                    << tree_bc.commited_tokens[i].request_index
-                    << ", Abs Depth: " << tree_bc.commited_tokens[i].token_depth
-                    << ", Token Index in batch: "
-                    << tree_bc.commited_tokens[i].token_index << "\n";
-        }
-
-        FutureMap fm = im.inference(&tree_model, 0, tree_bc);
-        assert(fm.get_future_map_domain().get_volume() == 1);
-        Future future = fm.get_future(0);
-        InferenceResult ir = future.get_result<InferenceResult>();
-        for (int i = 0; i < tree_bc.num_tokens; i++) {
-          if (i == 7) {
-            std::cout << "------------------\n";
-          }
-          printf("verify_tokens[%d] = %d\n", i, ir.token_ids[i]);
-        }
-
-        std::cout << "------Init New Beam Search Batch------\n";
-        bc = rm.prepare_next_batch_init(tree_bc, ir);
-        std::cout << "[Init] num_tokens: " << bc.num_tokens << "\n";
-        for (int i = 0; i < bc.num_tokens; i++) {
-          std::cout << "[Token] Request Index: "
-                    << bc.tokensInfo[i].request_index
-                    << ", Abs Depth: " << bc.tokensInfo[i].abs_depth_in_request
-                    << ", Token Id: " << bc.tokensInfo[i].token_id << "\n";
-        }
-        std::cout << "Batch Depth: " << bc.beamRequestsInfo[0].current_depth
-                  << "\n";
-
-        iteration++;
-
-        if (iteration < 4) {
-          std::cout << "\n\n~~~~~~~~~~teration " << iteration << "~~~~~~~~~~\n";
-          depth = bc.beamRequestsInfo[0].current_depth;
-          fm = im.inference(&beam_model, bid, bc);
-          assert(fm.get_future_map_domain().get_volume() == 1);
-          beam_future_handlers[bid] = fm.get_future(0);
-          beam_batch_configs[bid] = bc;
-        } else {
-          break;
-        }
-      }
+      future_handlers[bid] = fm.get_future(0);
+      batch_configs[bid] = bc;
     }
   }
-
-  // Execution fence
-  {
-    Future future = runtime->issue_execution_fence(ctx);
-    future.get_void_result();
-  }
-
-  // float* data
-  std::cout << "----------inference finished--------------" << std::endl;
 }
-
 void FlexFlow::register_custom_tasks() {}
