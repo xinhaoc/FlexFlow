@@ -74,7 +74,7 @@ Tensor
   int weight_num = bias ? 2 : 1;
   Layer *li = new Layer(this,
                         OP_SPEC_INC_MULTIHEAD_SELF_ATTENTION,
-                        DT_FLOAT,
+                        input->data_type,
                         name,
                         1 /*inputs*/,
                         weight_num /*weights*/,
@@ -88,7 +88,7 @@ Tensor
     }
     dims[0] = embed_dim;
     li->outputs[0] = create_tensor_legion_ordering(
-        numdims, dims, DT_FLOAT, li, 0, true /*create_grad*/);
+        numdims, dims, input->data_type, li, 0, true /*create_grad*/);
   }
   {
     // Compute weight size
@@ -102,7 +102,7 @@ Tensor
     int dims[2] = {qParas + kParas + vParas + oParas, num_heads};
     li->weights[0] = create_weight_legion_ordering(2,
                                                    dims,
-                                                   DT_FLOAT,
+                                                   input->data_type,
                                                    li,
                                                    true /*create_grad*/,
                                                    kernel_initializer,
@@ -113,13 +113,13 @@ Tensor
     int dims[1] = {embed_dim * 4};
     li->weights[1] = create_weight_legion_ordering(1,
                                                    dims,
-                                                   DT_FLOAT,
+                                                   input->data_type,
                                                    li,
                                                    true /*create_grad*/,
                                                    kernel_initializer,
                                                    CHOSEN_SYNC_TYPE);
   }
-  li->data_type = DT_FLOAT;
+  li->data_type = input->data_type;
   li->add_int_property("embed_dim", embed_dim);
   li->add_int_property("num_heads", num_heads);
   li->add_int_property("kdim", kdim);
@@ -207,7 +207,7 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
     // Initializer* _bias_initializer)
     : Op(model,
          OP_SPEC_INC_MULTIHEAD_SELF_ATTENTION,
-         DT_FLOAT,
+         _input->data_type,
          name,
          1 /*inputs*/,
          (_bias ? 2 : 1) /*weights*/,
@@ -259,7 +259,7 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
     ParameterSyncType comm_type = ParameterSyncType::PS;
 #endif
     weights[0] = model.create_parallel_weight<3>(dims,
-                                                 DT_FLOAT,
+                                                 _input->data_type,
                                                  NULL /*owner_op*/,
                                                  true /*create_grad*/,
                                                  initializer,
@@ -279,14 +279,14 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
     ParameterSyncType comm_type = ParameterSyncType::PS;
 #endif
     weights[1] = model.create_parallel_weight<2>(dims,
-                                                 DT_FLOAT,
+                                                 input->data_type,
                                                  NULL /*owner_op*/,
                                                  true /*create_grad*/,
                                                  NULL,
                                                  comm_type);
   }
   outputs[0] = model.create_parallel_tensor_legion_ordering(
-      _input->num_dims, dims, DT_FLOAT, this);
+      _input->num_dims, dims, input->data_type, this);
   /* for (int i = 0; i < numdim; i++) { */
   /*   register_output_input_parallel_dims(outputs[0], i, inputs[0], i); */
   /* } */
@@ -315,7 +315,7 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
     // Initializer* _bias_initializer)
     : Op(model,
          OP_SPEC_INC_MULTIHEAD_SELF_ATTENTION,
-         DT_FLOAT,
+         _input->data_type,
          name,
          1 /*inputs*/,
          (_bias ? 2 : 1) /*weights*/,
@@ -365,7 +365,7 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
     ParameterSyncType comm_type = ParameterSyncType::PS;
 #endif
     weights[0] = model.create_parallel_weight<3>(dims,
-                                                 DT_FLOAT,
+                                                 _weight->data_type,
                                                  NULL /*owner_op*/,
                                                  true /*create_grad*/,
                                                  initializer,
@@ -383,14 +383,14 @@ SpecIncMultiHeadSelfAttention::SpecIncMultiHeadSelfAttention(
     ParameterSyncType comm_type = ParameterSyncType::PS;
 #endif
     weights[1] = model.create_parallel_weight<2>(dims,
-                                                 DT_FLOAT,
+                                                 _weight->data_type,
                                                  NULL /*owner_op*/,
                                                  true /*create_grad*/,
                                                  NULL,
                                                  comm_type);
   }
   outputs[0] = model.create_parallel_tensor_legion_ordering(
-      _input->num_dims, dims, DT_FLOAT, this);
+      _input->num_dims, dims, _input->data_type, this);
 
   /* for (int i = 0; i < numdim; i++) { */
   /*   register_output_input_parallel_dims(outputs[0], i, inputs[0], i); */
@@ -546,12 +546,14 @@ OpMeta *SpecIncMultiHeadSelfAttention::init_task(
       (SpecIncMultiHeadSelfAttention *)task->args;
   FFHandler handle = *((FFHandler const *)task->local_args);
 
+
+
   GenericTensorAccessorR input = helperGetGenericTensorAccessorRO(
-      DT_FLOAT, regions[0], task->regions[0], FID_DATA, ctx, runtime);
+      attn->data_type, regions[0], task->regions[0], FID_DATA, ctx, runtime);
   GenericTensorAccessorR weight = helperGetGenericTensorAccessorRO(
-      DT_FLOAT, regions[1], task->regions[1], FID_DATA, ctx, runtime);
+      attn->data_type, regions[1], task->regions[1], FID_DATA, ctx, runtime);
   GenericTensorAccessorW output = helperGetGenericTensorAccessorWO(
-      DT_FLOAT, regions[2], task->regions[2], FID_DATA, ctx, runtime);
+      attn->data_type, regions[2], task->regions[2], FID_DATA, ctx, runtime);
 
   int num_samples = input.domain.hi()[2] - input.domain.lo()[2] + 1;
   assert(attn->qoSeqLength == input.domain.hi()[1] - input.domain.lo()[1] + 1);

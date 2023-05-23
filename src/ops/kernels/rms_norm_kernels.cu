@@ -26,7 +26,8 @@ using Legion::coord_t;
 constexpr int kCUDABlockReduceNumThreads = 512;
 constexpr int kCUDANumThreads = 256;
 
-RMSNormMeta::RMSNormMeta(FFHandler handler, RMSNorm const *rms)
+template <typename T>
+RMSNormMeta<T>::RMSNormMeta(FFHandler handler, RMSNorm const *rms)
     : OpMeta(handler, rms) {
   eps = rms->eps;
   alpha = 1.0f;
@@ -36,8 +37,8 @@ RMSNormMeta::RMSNormMeta(FFHandler handler, RMSNorm const *rms)
   batch_size = rms->effective_batch_size;
   num_elements = in_dim * batch_size;
 
-  checkCUDA(cudaMalloc(&rms_ptr, batch_size * sizeof(float)));
-  checkCUDA(cudaMalloc(&norm_ptr, num_elements * sizeof(float)));
+  checkCUDA(cudaMalloc(&rms_ptr, batch_size * sizeof(T)));
+  checkCUDA(cudaMalloc(&norm_ptr, num_elements * sizeof(T)));
 }
 
 namespace Kernels {
@@ -83,7 +84,7 @@ __inline__ __device__ T BlockReduceSum(T val, T *shared) {
 
 template <typename T>
 __global__ void
-    RowwiseRootMeanSquareKernel(int64_t N, T eps, T const *X, T *rms) {
+    RowwiseRootMeanSquareKernel(int64_t N, float eps, T const *X, T *rms) {
   __shared__ T v_shared[C10_WARP_SIZE];
   const int64_t i = blockIdx.x;
   T sum = 0;
@@ -117,17 +118,19 @@ __global__ void NormKernel(int64_t N, T const *X, T const *rstd, T *Y) {
   }
 }
 
+template <typename T>
 __global__ void elewise_apply_weights(int64_t batch_size,
                                       int64_t in_dim,
-                                      float const *norm,
-                                      float const *weights,
-                                      float *output) {
+                                      T const *norm,
+                                      T const *weights,
+                                      T *output) {
   CUDA_KERNEL_LOOP(i, batch_size * in_dim) {
     output[i] = norm[i] * weights[i % in_dim];
   }
 }
 
-void forward_kernel_wrapper(RMSNormMeta const *m,
+template <typename T>
+void forward_kernel_wrapper(RMSNormMeta<T> const *m,
                             GenericTensorAccessorR const &input,
                             GenericTensorAccessorR const &weight,
                             GenericTensorAccessorW const &output) {
@@ -141,14 +144,14 @@ void forward_kernel_wrapper(RMSNormMeta const *m,
     cudaEventRecord(t_start, stream);
   }
 
-  RowwiseRootMeanSquareKernel<float>
-      <<<m->batch_size, kCUDABlockReduceNumThreads, 0, stream>>>(
+  if(std::is_same<T,float>::value){
+    RowwiseRootMeanSquareKernel<T><<<m->batch_size, kCUDABlockReduceNumThreads, 0, stream>>>(
           m->in_dim, m->eps, input.get_float_ptr(), m->rms_ptr);
 
-  NormKernel<float><<<m->batch_size, kCUDANumThreads, 0, stream>>>(
+    NormKernel<T><<<m->batch_size, kCUDANumThreads, 0, stream>>>(
       m->in_dim, input.get_float_ptr(), m->rms_ptr, m->norm_ptr);
 
-  elewise_apply_weights<<<GET_BLOCKS(parallelism),
+    elewise_apply_weights<T><<<GET_BLOCKS(parallelism),
                           min(CUDA_NUM_THREADS, parallelism),
                           0,
                           stream>>>(m->batch_size,
@@ -156,6 +159,25 @@ void forward_kernel_wrapper(RMSNormMeta const *m,
                                     m->norm_ptr,
                                     weight.get_float_ptr(),
                                     output.get_float_ptr());
+  }else if(std::is_same<T,half>::value){
+    RowwiseRootMeanSquareKernel<T><<<m->batch_size, kCUDABlockReduceNumThreads, 0, stream>>>(
+          m->in_dim, m->eps, input.get_half_ptr(), m->rms_ptr);
+
+    NormKernel<T><<<m->batch_size, kCUDANumThreads, 0, stream>>>(
+      m->in_dim, input.get_half_ptr(), m->rms_ptr, m->norm_ptr);
+
+    elewise_apply_weights<T><<<GET_BLOCKS(parallelism),
+                          min(CUDA_NUM_THREADS, parallelism),
+                          0,
+                          stream>>>(m->batch_size,
+                                    m->in_dim,
+                                    m->norm_ptr,
+                                    weight.get_half_ptr(),
+                                    output.get_half_ptr());
+
+  }
+
+  
   if (m->profiling) {
     cudaEventRecord(t_end, stream);
     checkCUDA(cudaEventSynchronize(t_end));
@@ -166,6 +188,16 @@ void forward_kernel_wrapper(RMSNormMeta const *m,
     printf("[RMSNorm] forward time (CF) = %.2fms\n", elapsed);
   }
 }
+
+template void forward_kernel_wrapper<float>(RMSNormMeta<float> const *m,
+                            GenericTensorAccessorR const &input,
+                            GenericTensorAccessorR const &weight,
+                            GenericTensorAccessorW const &output);
+
+template void forward_kernel_wrapper<half>(RMSNormMeta<half> const *m,
+                            GenericTensorAccessorR const &input,
+                            GenericTensorAccessorR const &weight,
+                            GenericTensorAccessorW const &output);                            
 
 } // namespace RMSNorm
 } // namespace Kernels

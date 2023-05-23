@@ -11,6 +11,7 @@ using Legion::coord_t;
 
 class RMSNorm;
 
+template <typename T>
 class RMSNormMeta : public OpMeta {
 public:
   RMSNormMeta(FFHandler handler, RMSNorm const *rms);
@@ -24,8 +25,8 @@ public:
 
 public:
   float eps;
-  float *rms_ptr;
-  float *norm_ptr;
+  T *rms_ptr;
+  T *norm_ptr;
 
   float alpha;
   float beta;
@@ -38,7 +39,9 @@ public:
 
 namespace Kernels {
 namespace RMSNorm {
-void forward_kernel_wrapper(RMSNormMeta const *m,
+
+template <typename T>
+void forward_kernel_wrapper(RMSNormMeta<T> const *m,
                             GenericTensorAccessorR const &input,
                             GenericTensorAccessorR const &weight,
                             GenericTensorAccessorW const &output);

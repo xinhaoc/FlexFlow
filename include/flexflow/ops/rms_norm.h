@@ -7,8 +7,6 @@
 
 namespace FlexFlow {
 
-class RMSNormMeta;
-
 class RMSNorm : public Op {
 public:
   using Params = RMSNormParams;

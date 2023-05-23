@@ -60,25 +60,30 @@ Tensor FFModel::rms_norm(const Tensor input,
                          char const *name) {
   Layer *rm = new Layer(this,
                         OP_RMS_NORM,
-                        DT_FLOAT,
+                        input->data_type,
                         name,
                         1 /*inputs*/,
                         1 /*weights*/,
                         1 /*outputs*/,
                         input);
-  rm->outputs[0] = create_tensor_legion_ordering(
-      input->num_dims, input->dims, DT_FLOAT, rm, 0, true /*create_grad*/);
+  rm->outputs[0] = create_tensor_legion_ordering(input->num_dims,
+                                                 input->dims,
+                                                 input->data_type,
+                                                 rm,
+                                                 0,
+                                                 true /*create_grad*/);
 
   // weights
   int weight_dims[1] = {dim};
   rm->weights[0] = create_weight_legion_ordering(1,
                                                  weight_dims,
-                                                 DT_FLOAT,
+                                                 input->data_type,
                                                  rm,
                                                  true /*create_grad*/,
                                                  nullptr,
                                                  CHOSEN_SYNC_TYPE);
 
+  rm->data_type = input->data_type;
   rm->add_float_property("eps", eps);
   rm->add_int_property("dim", dim);
   layers.push_back(rm);
@@ -144,6 +149,7 @@ RMSNorm::RMSNorm(FFModel &model,
   int num_dims = _input->num_dims;
   this->dim = dim;
   data_dim = _input->dims[0].size;
+  data_type = _input->data_type;
   effective_batch_size = 1;
   for (int i = 1; i <= num_dims - 2; i++) {
     effective_batch_size *= _input->dims[i].size;
@@ -267,10 +273,17 @@ OpMeta *RMSNorm::init_task(Task const *task,
                            std::vector<PhysicalRegion> const &regions,
                            Context ctx,
                            Runtime *runtime) {
-  RMSNorm *rn = (RMSNorm *)task->args;
+  RMSNorm const *rn = (RMSNorm *)task->args;
   FFHandler handle = *((FFHandler const *)task->local_args);
-  RMSNormMeta *meta = new RMSNormMeta(handle, rn);
-  return meta;
+  if (rn->data_type == DT_FLOAT) {
+    RMSNormMeta<float> *meta = new RMSNormMeta<float>(handle, rn);
+    return meta;
+  } else if (rn->data_type == DT_HALF) {
+    RMSNormMeta<half> *meta = new RMSNormMeta<half>(handle, rn);
+    return meta;
+  } else {
+    assert(false && "Unsupported DataType in RMS Norm");
+  }
 }
 
 void RMSNorm::forward(FFModel const &ff) {
@@ -280,7 +293,7 @@ void RMSNorm::forward(FFModel const &ff) {
   set_argumentmap_for_forward(ff, argmap);
   IndexLauncher launcher(RMSNROM_FWD_TASK_ID,
                          parallel_is,
-                         TaskArgument(NULL, 0),
+                         TaskArgument(this, sizeof(RMSNorm)),
                          argmap,
                          Predicate::TRUE_PRED,
                          false /*must*/,
@@ -322,7 +335,7 @@ FutureMap RMSNorm::inference(FFModel const &ff,
 
   IndexLauncher launcher(RMSNROM_FWD_TASK_ID,
                          parallel_is,
-                         TaskArgument(NULL, 0),
+                         TaskArgument(this, sizeof(RMSNorm)),
                          argmap,
                          Predicate::TRUE_PRED,
                          false /*must*/,
@@ -360,20 +373,56 @@ void RMSNorm::forward_task(Task const *task,
                            Runtime *runtime) {
   assert(task->regions.size() == 3);
   assert(regions.size() == 3);
-  RMSNormMeta const *m = *((RMSNormMeta **)task->local_args);
-  GenericTensorAccessorR input = helperGetGenericTensorAccessorRO(
-      DT_FLOAT, regions[0], task->regions[0], FID_DATA, ctx, runtime);
-  GenericTensorAccessorW output = helperGetGenericTensorAccessorWO(
-      DT_FLOAT, regions[1], task->regions[1], FID_DATA, ctx, runtime);
-  GenericTensorAccessorR weight = helperGetGenericTensorAccessorRO(
-      DT_FLOAT, regions[2], task->regions[2], FID_DATA, ctx, runtime);
-  forward_kernel_wrapper(m, input, weight, output);
+  RMSNorm const *rn = (RMSNorm *)task->args;
+
+  assert(rn->data_type == DT_FLOAT || rn->data_type == DT_HALF);
+
+  if (rn->data_type == DT_FLOAT) {
+    RMSNormMeta<float> const *m = *((RMSNormMeta<float> **)task->local_args);
+    GenericTensorAccessorR input = helperGetGenericTensorAccessorRO(
+        m->input_type[0], regions[0], task->regions[0], FID_DATA, ctx, runtime);
+    GenericTensorAccessorW output =
+        helperGetGenericTensorAccessorWO(m->output_type[0],
+                                         regions[1],
+                                         task->regions[1],
+                                         FID_DATA,
+                                         ctx,
+                                         runtime);
+    GenericTensorAccessorR weight =
+        helperGetGenericTensorAccessorRO(m->weight_type[0],
+                                         regions[2],
+                                         task->regions[2],
+                                         FID_DATA,
+                                         ctx,
+                                         runtime);
+    forward_kernel_wrapper<float>(m, input, weight, output);
+  } else {
+    RMSNormMeta<half> const *m = *((RMSNormMeta<half> **)task->local_args);
+    GenericTensorAccessorR input = helperGetGenericTensorAccessorRO(
+        m->input_type[0], regions[0], task->regions[0], FID_DATA, ctx, runtime);
+    GenericTensorAccessorW output =
+        helperGetGenericTensorAccessorWO(m->output_type[0],
+                                         regions[1],
+                                         task->regions[1],
+                                         FID_DATA,
+                                         ctx,
+                                         runtime);
+    GenericTensorAccessorR weight =
+        helperGetGenericTensorAccessorRO(m->weight_type[0],
+                                         regions[2],
+                                         task->regions[2],
+                                         FID_DATA,
+                                         ctx,
+                                         runtime);
+    forward_kernel_wrapper<half>(m, input, weight, output);
+  }
 }
 
 void RMSNorm::serialize(Legion::Serializer &sez) const {
   sez.serialize(this->layer_guid.id);
   sez.serialize(this->eps);
   sez.serialize(this->dim);
+  sez.serialize(this->data_type);
 }
 
 using PCG::Node;
@@ -386,11 +435,13 @@ Node RMSNorm::deserialize(FFModel &ff,
   float eps;
   size_t id;
   int dim;
+  DataType data_type;
   dez.deserialize(id);
 
   LayerID layer_guid(id);
   dez.deserialize(eps);
   dez.deserialize(dim);
+  dez.deserialize(data_type);
   RMSNormParams params;
   params.layer_guid = layer_guid;
   params.eps = eps;
