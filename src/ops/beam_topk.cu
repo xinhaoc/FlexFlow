@@ -292,7 +292,7 @@ __device__ void mergeBeamShards(int num_shards,
                          ((slot % max_heap_size) / k)];
       min_heap.assign(slot, {slot, (entries[slot].value * prob)});
       if (verbose && batch_index == 0) {
-        printf("slot %d, value %.15f, prob %15f\n",
+        printf("slot %d, value %.15f, probs %15f\n",
                slot,
                entries[slot].value,
                prob);
