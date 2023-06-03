@@ -108,7 +108,8 @@ public:
                                  std::string const &weight_file_path,
                                  int num_pipeline_stages,
                                  InferenceMode mode,
-                                 bool use_full_precision = false);
+                                 bool use_full_precision = false,
+                                 bool use_sampling = false);
 };
 
 }; // namespace FlexFlow

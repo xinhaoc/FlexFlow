@@ -7,6 +7,7 @@
 #include "flexflow/ops/attention_params.h"
 #include "flexflow/ops/batch_matmul_params.h"
 #include "flexflow/ops/beam_topk_params.h"
+#include "flexflow/ops/sampling_params.h"
 #include "flexflow/ops/cast_params.h"
 #include "flexflow/ops/concat_params.h"
 #include "flexflow/ops/conv_2d_params.h"

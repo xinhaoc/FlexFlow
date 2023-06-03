@@ -25,7 +25,8 @@ void LLAMA::create_llama_model(FFModel &ff,
                                std::string const &weight_file_path,
                                int num_pipeline_stages,
                                InferenceMode mode,
-                               bool use_full_precision) {
+                               bool use_full_precision,
+                               bool use_sampling) {
   Config llama_config(model_config_file_path);
   llama_config.printConfig();
   //------------------------------compute machine views ------------------
@@ -203,7 +204,14 @@ void LLAMA::create_llama_model(FFModel &ff,
     Tensor softmax = ff.softmax(dense, -1);
     output = ff.beam_top_k(softmax, llama_config.max_beam_width, false);
   } else {
-    output = ff.arg_top_k(dense, /*k=*/1, false);
+    if(use_sampling){
+      // Tensor temperature_scaling = ff.scalar_truediv(dense, 0.8);
+      Tensor softmax = ff.softmax(dense, -1);
+      output = ff.sampling(softmax, 0.95);
+    }else{
+      output = ff.arg_top_k(dense, /*k=*/1, false);
+    }
+    
   }
 
   // Compile the model

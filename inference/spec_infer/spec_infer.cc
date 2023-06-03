@@ -45,7 +45,8 @@ void parse_input_args(char **argv,
                       int argc,
                       FilePaths &paths,
                       ModelTypes &model_types,
-                      bool &use_full_precision) {
+                      bool &use_full_precision,
+                      bool &use_sampling) {
   for (int i = 1; i < argc; i++) {
     // llm model type
     if (!strcmp(argv[i], "-llm-model")) {
@@ -120,6 +121,10 @@ void parse_input_args(char **argv,
       use_full_precision = true;
       continue;
     }
+    if (!strcmp(argv[i], "--sampling")) {
+      use_sampling = true;
+      continue;
+    }
   }
 }
 
@@ -131,11 +136,13 @@ void FlexFlow::top_level_task(Task const *task,
   FilePaths file_paths;
   ModelTypes model_types;
   bool use_full_precision = false;
+  bool use_sampling = false;
 
   InputArgs const &command_args = HighLevelRuntime::get_input_args();
   char **argv = command_args.argv;
   int argc = command_args.argc;
-  parse_input_args(argv, argc, file_paths, model_types, use_full_precision);
+  parse_input_args(
+      argv, argc, file_paths, model_types, use_full_precision, use_sampling);
   if (file_paths.ssm_weight_file_paths.size() == 0) {
     assert(false &&
            "SpecInfer needs at least one SSM for speculative inference");
@@ -229,7 +236,8 @@ void FlexFlow::top_level_task(Task const *task,
                               file_paths.llm_weight_file_path,
                               ffconfig.workersPerNode * ffconfig.numNodes,
                               TREE_VERIFY_MODE,
-                              use_full_precision);
+                              use_full_precision,
+                              use_sampling);
   } else {
     OPT::create_opt_model(tree_model,
                           im,

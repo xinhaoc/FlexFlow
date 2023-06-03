@@ -6,6 +6,7 @@
 #include "flexflow/ops/batch_matmul.h"
 #include "flexflow/ops/batch_norm.h"
 #include "flexflow/ops/beam_topk.h"
+#include "flexflow/ops/sampling.h"
 #include "flexflow/ops/cache.h"
 #include "flexflow/ops/cast.h"
 #include "flexflow/ops/concat.h"
