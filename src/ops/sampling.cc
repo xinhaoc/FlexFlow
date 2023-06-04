@@ -150,7 +150,7 @@ void Sampling::init_inference(FFModel const &ff,
   MachineView const *view = mv ? mv : &batch_outputs[0]->machine_view;
   size_t machine_view_hash = view->hash();
   set_argumentmap_for_init_inference(ff, argmap, batch_outputs[0]);
-  IndexLauncher launcher(ARG_TOPK_INIT_TASK_ID,
+  IndexLauncher launcher(SAMPLING_INIT_TASK_ID,
                          parallel_is,
                          TaskArgument(this, sizeof(Sampling)),
                          argmap,
@@ -188,7 +188,7 @@ void Sampling::init(FFModel const &ff) {
   Context ctx = ff.config.lg_ctx;
   Runtime *runtime = ff.config.lg_hlr;
   set_argumentmap_for_init(ff, argmap);
-  IndexLauncher launcher(ARG_TOPK_INIT_TASK_ID,
+  IndexLauncher launcher(SAMPLING_INIT_TASK_ID,
                          parallel_is,
                          TaskArgument(this, sizeof(Sampling)),
                          argmap,
@@ -250,7 +250,7 @@ FutureMap Sampling::inference(FFModel const &ff,
   size_t machine_view_hash = view->hash();
   /* std::cout << "Sampling op machine_view: " << *(MachineView const *)mv
             << std::endl; */
-  IndexLauncher launcher(ARG_TOPK_INF_TASK_ID,
+  IndexLauncher launcher(SAMPLING_INF_TASK_ID,
                          parallel_is,
                          TaskArgument(NULL, 0),
                          argmap,
