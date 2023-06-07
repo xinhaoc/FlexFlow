@@ -11,6 +11,8 @@ namespace FlexFlow {
 class SamplingMeta : public OpMeta {
 public:
   float top_p;
+  void *cumsum_ptr;
+  void *origin_ptr;
   SamplingMeta(FFHandler handle, Op const *op);
 };
 

@@ -40,10 +40,11 @@ __global__ void re_normalized(DT *input_ptr, DT div, int length) {
 }
 
 template <typename DT>
-__global__ void find_idx(DT *cumsum_ptr, DT target, int length, int *indices_ptr, int k) {
+__global__ void find_idx(DT *cumsum_ptr, DT *origin_ptr, DT target, int length, int *indices_ptr, int k) {
   CUDA_KERNEL_LOOP(i, length) {
     if(cumsum_ptr[i] >= target){
-      indices_ptr[k] = i;
+      indices_ptr[k] = origin_ptr[i];
+      break;
     }
   }
 }
@@ -61,14 +62,17 @@ void Sampling::forward_kernel(SamplingMeta const *m,
   // 2. cumsum
   // how to do it in parallel?
   
-  DT *cumsum_ptr;
-  checkCUDA(cudaMalloc(&cumsum_ptr, batch_size * length * sizeof(DT)));
+  checkCUDA(cudaMemcpy(static_cast<DT *>(m->origin_ptr),
+                       input_ptr,
+                       sizeof(DT) * batch_size * length,
+                       cudaMemcpyDeviceToDevice));
 
   for (int i = 0; i < batch_size; i++) {
     thrust::sort(thrust::device, input_ptr + i * length, input_ptr + (i + 1) * length, thrust::greater<DT>());
+    thrust::sort(thrust::device, static_cast<DT *>(m->origin_ptr) + i * length, input_ptr + (i + 1) * length, thrust::greater<DT>());
     thrust::inclusive_scan(thrust::device, input_ptr + i * length,
                            input_ptr + (i + 1) * length,
-                           cumsum_ptr + i * length);
+                           static_cast<DT *>(m->cumsum_ptr) + i * length);
   }
 
    
@@ -78,34 +82,38 @@ void Sampling::forward_kernel(SamplingMeta const *m,
       <<<GET_BLOCKS(parallelism),
          min(CUDA_NUM_THREADS, parallelism),
          0,
-         stream>>>(input_ptr, cumsum_ptr, top_p, parallelism);
+         stream>>>(input_ptr, static_cast<DT *>(m->cumsum_ptr), top_p, parallelism);
    
   // 4. sum/div
   for (int i = 0; i < batch_size; i++) {
     DT sum = thrust::reduce(thrust::device, input_ptr + i * length,
                             input_ptr + (i + 1) * length);
     parallelism = length;
+    
     re_normalized<DT><<<GET_BLOCKS(parallelism),
                         min(CUDA_NUM_THREADS, parallelism),
                         0,
                         stream>>>(input_ptr + i * length, sum, length);
   }
-  print_tensor<float>((float *)input_ptr, 100, "sdsdasd");      
-  assert(false);
+  
   // 5.multinominal
   for (int i = 0; i < batch_size; i++) {
     parallelism = length;
     DT random = static_cast<DT>(((float)std::rand()) / RAND_MAX);
     thrust::inclusive_scan(thrust::device, input_ptr + i * length,
                            input_ptr + (i + 1) * length,
-                           cumsum_ptr + i * length);
+                           static_cast<DT *>(m->cumsum_ptr) + i * length);
 
                           
     find_idx<DT><<<GET_BLOCKS(parallelism),
                         min(CUDA_NUM_THREADS, parallelism),
                         0,
-                        stream>>>(cumsum_ptr + i * length, random, length, indices_ptr, i);                 
+                        stream>>>(static_cast<DT *>(m->cumsum_ptr) + i * length, static_cast<DT *>(m->origin_ptr) + i * length, random, length, indices_ptr, i);
+    
+                                 
   }
+  print_tensor<int>((int *)indices_ptr, 64, "sdsdasd");      
+  assert(false);
 }
 
 /*static*/
@@ -156,6 +164,9 @@ void Sampling::forward_kernel_wrapper(SamplingMeta const *m,
 }
 
 SamplingMeta::SamplingMeta(FFHandler handler, Op const *op)
-    : OpMeta(handler, op) {}
+    : OpMeta(handler, op) {
+      checkCUDA(cudaMalloc(&cumsum_ptr, 64 * 32000 * sizeof(float)));
+      checkCUDA(cudaMalloc(&origin_ptr, 64 * 32000 * sizeof(float)));
+    }
 
 }; // namespace FlexFlow
