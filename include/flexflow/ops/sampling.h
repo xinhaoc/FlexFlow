@@ -12,7 +12,7 @@ class SamplingMeta : public OpMeta {
 public:
   float top_p;
   void *cumsum_ptr;
-  void *origin_ptr;
+  void *sampled;
   SamplingMeta(FFHandler handle, Op const *op);
 };
 
