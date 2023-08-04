@@ -673,6 +673,7 @@ OpMeta *IncMultiHeadSelfAttention::init_task(
            m->weightSize);
   }
 
+  m->findBestAlgoID();
   return m;
 }
 

@@ -14,6 +14,7 @@
 #include "math.h"
 #include <cfloat>
 #include <complex>
+#include <mutex>
 
 namespace FlexFlow {
 
@@ -192,6 +193,11 @@ public:
   cudnnTensorDescriptor_t qk_tensor;
   cuFloatComplex *complex_input;
 #endif
+  static int
+      profiled_best_algo[BatchConfig::MAX_NUM_TOKENS]; // [token, gemm_num]
+  static std::mutex profile_lock;
+  static bool has_profiled;
+  void findBestAlgoID();
 };
 
 }; // namespace FlexFlow
