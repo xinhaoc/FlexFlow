@@ -147,6 +147,7 @@ Op::Op(FFModel &model,
   }
   for (int i = 0; i < numInputs; i++) {
     trainableInputs[i] = true;
+    reset_input_grads[i] = true;
     // resetInputGrads[i] = true;
   }
   for (int i = 0; i < MAX_NUM_OUTPUTS; i++) {
@@ -192,6 +193,7 @@ Op::Op(FFModel &model,
   }
   for (int i = 0; i < numInputs; i++) {
     trainableInputs[i] = true;
+    reset_input_grads[i] = true;
     // resetInputGrads[i] = true;
   }
   for (int i = 0; i < MAX_NUM_OUTPUTS; i++) {
@@ -1468,6 +1470,7 @@ OpMeta::OpMeta(FFHandler _handle)
     : handle(_handle), profiling(false), inference_debugging(false) {
   for (int i = 0; i < MAX_NUM_INPUTS; i++) {
     trainableInputs[i] = true;
+    reset_input_grads[i] = true;
   }
   for (int i = 0; i < MAX_NUM_INPUTS; i++) {
     input_type[i] = DT_NONE;
@@ -1484,6 +1487,7 @@ OpMeta::OpMeta(FFHandler _handle)
 OpMeta::OpMeta(FFHandler _handle, Op const *op) : OpMeta(_handle) {
   for (int i = 0; i < op->numInputs; i++) {
     input_type[i] = op->inputs[i]->data_type;
+    reset_input_grads[i] = op->reset_input_grads[i];
   }
   for (int i = 0; i < op->numWeights; i++) {
     weight_type[i] = op->weights[i]->data_type;
@@ -3452,6 +3456,23 @@ void FFModel::compile(LossType loss_type,
       assert(op->outputs[i]->owner_op == op);
       assert(op->outputs[i]->owner_idx == i);
       assert(op->outputs[i]->parallel_tensor_guid != 0);
+    }
+  }
+
+  // Check whether we need to reset input grads
+  // We use a parallel tensor's region as the key
+  std::set<LogicalRegion> reset_inputs;
+  for (int l = operators.size() - 1; l >= 0; l--) {
+    Op *op = operators[l];
+    for (int i = 0; i < op->numInputs; i++) {
+      assert(op->inputs[i]->region != LogicalRegion::NO_REGION);
+      if (reset_inputs.find(op->inputs[i]->region) != reset_inputs.end()) {
+        // We should not reset input grads since other operators have already
+        // saved gradients into the region
+        op->reset_input_grads[i] = false;
+      } else {
+        reset_inputs.insert(op->inputs[i]->region);
+      }
     }
   }
 

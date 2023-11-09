@@ -314,7 +314,10 @@ void backward_kernel(ElementBinaryMeta const *m,
   checkCUDNN(miopenSetStream(m->handle.dnn, stream));
 
   if (m->op_type == OP_EW_ADD || m->op_type == OP_EW_SUB) {
-    float alpha = 1.0f, alpha2 = 0.0f, beta = 1.0f;
+    float alpha = 1.0f, alpha2 = 0.0f, beta = 0.0f;
+    if (!m->reset_input_grads[0]) {
+        beta = 1.0f;
+      }
     if (in1_grad_ptr != nullptr) {
       if (m->broadcast_input1) {
         checkCUDNN(miopenReduceTensor(m->handle.dnn,

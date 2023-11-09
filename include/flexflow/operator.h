@@ -321,6 +321,7 @@ public:
   ParallelTensor inputs[MAX_NUM_INPUTS];
   ParallelParameter weights[MAX_NUM_WEIGHTS];
   bool trainableInputs[MAX_NUM_INPUTS];
+  bool reset_input_grads[MAX_NUM_INPUTS];
   OpMeta *meta[MAX_NUM_WORKERS];
   std::map<ParallelTensor, OpMeta *[MAX_NUM_WORKERS]> inference_meta;
   int numInputs, numWeights, numOutputs;
