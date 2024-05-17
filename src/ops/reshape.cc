@@ -80,9 +80,14 @@ Op *Reshape::create_operator_from_layer(
   return new Reshape(model, layer->layer_guid, inputs[0], shape, layer->name);
 }
 
+bool match_pattern(std::vector<int> const &_shape) {
+  return (_shape.size() == 4 && _shape[1] == 1 && _shape[2] == 1 &&
+          _shape[3] == 512);
+}
+
 Reshape::Reshape(FFModel &model,
                  LayerID const &_layer_guid,
-                 const ParallelTensor input,
+                 ParallelTensor const input,
                  std::vector<int> const &_shape,
                  char const *name)
     : Op(model,
@@ -106,19 +111,64 @@ Reshape::Reshape(FFModel &model,
     if (input->dims[i].is_replica_dim) {
       num_replica_dims++;
     }
+    // std::cout << "reshape input size: " << input->dims[i].size
+    //           << ", parallelidx: " << input->dims[i].parallel_idx << ". degree: " << input->dims[i].degree 
+    //           << "is replicate dim: " << input->dims[i].is_replica_dim <<
+    //           "\n";
   }
+
+  // assert(false);
   // assert that all replica dims are leading dims
   for (int i = 0; i < num_replica_dims; i++) {
     assert(input->dims[input->num_dims - 1 - i].is_replica_dim);
   }
   int numdim = (int)_shape.size();
   ParallelDim dims[MAX_TENSOR_DIM];
-  for (int i = 0; i < numdim; i++) {
-    dims[i].size = _shape[numdim - 1 - i];
-    dims[i].degree = 1;
-    dims[i].parallel_idx = -1;
-    dims[i].is_replica_dim = false;
-  }
+
+
+    bool expanded = numdim >= input->num_dims;
+    bool aggregation = numdim < input->num_dims - 1;
+
+    for (int i = 0; i < numdim; i++) {
+      if (expanded && i < numdim - 1 &&
+          _shape[i] * _shape[i + 1] == input->dims[numdim - i - 2].size) {
+        dims[numdim - i - 1].size = _shape[i];
+        dims[numdim - i - 1].degree = input->dims[numdim - i - 2].degree;
+        dims[numdim - i - 1].parallel_idx =
+            input->dims[numdim - i - 2].parallel_idx;
+        dims[numdim - i - 1].is_replica_dim =
+            input->dims[numdim - i - 2].is_replica_dim;
+        std::cout << "expand dim i:" << i << ", " << dims[numdim - i - 1].degree
+                  << ", " << dims[numdim - i - 1].size << "\n";
+      } else if (aggregation &&
+                 (_shape[i] == input->dims[input->num_dims - 2 - i].size *
+                                   input->dims[input->num_dims - 3 - i].size)) {
+        // inherit
+        dims[numdim - i - 1].size = _shape[i];
+        dims[numdim - i - 1].degree =
+            input->dims[input->num_dims - 2 - i].degree;
+        dims[numdim - i - 1].parallel_idx =
+            input->dims[input->num_dims - 2 - i].parallel_idx;
+        dims[numdim - i - 1].is_replica_dim =
+            input->dims[input->num_dims - 2 - i].is_replica_dim;
+        // std::cout << "agree i: " << i <<", " << _shape[i] << "\n";
+      } else {
+        dims[numdim - i - 1].size = _shape[i];
+        dims[numdim - i - 1].degree = 1;
+        dims[numdim - i - 1].parallel_idx = -1;
+        dims[numdim - i - 1].is_replica_dim = false;
+      }
+    }
+
+
+
+
+  // for (int i = 0; i < numdim; i++) {
+  //   dims[i].size = _shape[numdim - 1 - i];
+  //   dims[i].degree = 1;
+  //   dims[i].parallel_idx = -1;
+  //   dims[i].is_replica_dim = false;
+  // }
   // copy all replica dims
   for (int i = 0; i < num_replica_dims; i++) {
     dims[i + numdim] = input->dims[input->num_dims - 1 - i];
@@ -131,6 +181,24 @@ Reshape::Reshape(FFModel &model,
     }
     dims[numdim - 1 - i] = input->dims[input->num_dims - 1 - i];
   }
+  
+  //TODO temporary fix for input to attention QK, fix it after fuse the attention block
+  if(match_pattern(_shape) && model.config.tensor_parallelism_degree > 1){
+    //number of heads
+    
+    dims[2].size = 12;
+    dims[2].degree = model.config.tensor_parallelism_degree;
+    dims[2].parallel_idx = 0;
+    dims[2].is_replica_dim = true;
+
+    dims[4].size = 1;
+    dims[4].degree = 1;
+    dims[4].parallel_idx = -1;
+    dims[4].is_replica_dim = false;
+
+  }
+
+
   outputs[0] = model.create_parallel_tensor_legion_ordering(
       numdim, dims, input->data_type, this);
   assert(outputs[0]->get_volume() == inputs[0]->get_volume());
@@ -140,7 +208,7 @@ Reshape::Reshape(FFModel &model,
                  ReshapeParams const &params,
                  const ParallelTensor input,
                  char const *name)
-    : Reshape(model, params.layer_guid, input, params.shape, name) {}
+    : Reshape(model, params.layer_guid, input, params.shape, params.name) {}
 
 void Reshape::init(FFModel const &ff) {
   assert(check_output_input_weight_same_parallel_is());
@@ -181,6 +249,8 @@ OpMeta *Reshape::init_task(Task const *task,
   Reshape const *reshape = (Reshape *)task->args;
   FFHandler handle = *((FFHandler const *)task->local_args);
   ReshapeMeta *m = new ReshapeMeta(handle);
+  std::strcpy(m->op_name, reshape->name);
+  m->layer_guid = reshape->layer_guid;
   m->data_type = reshape->outputs[0]->data_type;
   return m;
 }
@@ -294,6 +364,9 @@ ReshapeParams Reshape::get_params() const {
   ReshapeParams params;
   params.shape = shape_vec;
   params.layer_guid = this->layer_guid;
+  if (this->name != nullptr) {
+    strcpy(params.name, this->name);
+  }
   return params;
 }
 
@@ -410,6 +483,10 @@ void Reshape::serialize(Legion::Serializer &sez) const {
     sez.serialize(this->shape_array[i]);
   }
   sez.serialize(this->layer_guid.id);
+  sez.serialize(this->layer_guid.transformer_layer_id);
+  sez.serialize(this->layer_guid.model_id);
+  sez.serialize(strlen(this->name));
+  sez.serialize(this->name, strlen(this->name));
 }
 
 using PCG::Node;
@@ -427,13 +504,20 @@ Node Reshape::deserialize(FFModel &ff,
     dez.deserialize(value);
     shape.push_back(value);
   }
-  size_t id;
+  size_t id, transformer_layer_id, deserialized_model_id;
   dez.deserialize(id);
-  LayerID layer_guid(id);
+  dez.deserialize(transformer_layer_id);
+  dez.deserialize(deserialized_model_id);
+  size_t name_len;
+  char name[MAX_OPNAME] = {0};
+  dez.deserialize(name_len);
+  dez.deserialize(name, name_len);
+  LayerID layer_guid(id, transformer_layer_id, deserialized_model_id);
 
   ReshapeParams params;
   params.shape = shape;
   params.layer_guid = layer_guid;
+  strcpy(params.name, name);
   return ff.get_or_create_node<Reshape>(inputs[0], params);
 }
 
