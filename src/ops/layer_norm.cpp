@@ -25,11 +25,14 @@ constexpr int kCUDABlockReduceNumThreads = 512;
 constexpr int kCUDANumThreads = 256;
 constexpr int kColwiseReduceTileSize = 32;
 
-LayerNormMeta::LayerNormMeta(FFHandler handle, LayerNorm const *ln)
+LayerNormMeta::LayerNormMeta(FFHandler handle,
+                             LayerNorm const *ln,
+                             MemoryAllocator &gpu_mem_allocator)
     : OpMeta(handle) {
   elementwise_affine = ln->elementwise_affine;
   effective_batch_size = ln->effective_batch_size;
   effective_num_elements = ln->effective_num_elements;
+  use_bias = ln->use_bias;
   eps = ln->eps;
   // checkCUDA(hipMalloc(&mean_ptr, sizeof(float) * effective_batch_size));
   // checkCUDA(hipMalloc(&rstd_ptr, sizeof(float) * effective_batch_size));
@@ -52,6 +55,8 @@ LayerNormMeta::LayerNormMeta(FFHandler handle, LayerNorm const *ln)
   checkCUDA(
       hipMalloc(&bias_ptr, data_type_size(data_type) * effective_batch_size));
 }
+
+LayerNormMeta::~LayerNormMeta(void) {}
 
 template <typename T>
 __device__ __forceinline__ T WARP_SHFL_DOWN(T value,
@@ -177,22 +182,20 @@ void LayerNorm::forward_kernel_wrapper(LayerNormMeta const *m,
                                        GenericTensorAccessorR const &beta) {
   hipStream_t stream;
   checkCUDA(get_legion_stream(&stream));
-  // LayerNorm::forward_kernel<float>(
-  //     m, in_ptr, out_ptr, gamma_ptr, beta_ptr, stream);
-
   if (m->input_type[0] == DT_FLOAT) {
     LayerNorm::forward_kernel<float>(m,
                                      input.get_float_ptr(),
                                      output.get_float_ptr(),
                                      gamma.get_float_ptr(),
-                                     beta.get_float_ptr(),
+                                     m->use_bias ? beta.get_float_ptr()
+                                                 : nullptr,
                                      stream);
   } else if (m->input_type[0] == DT_HALF) {
     LayerNorm::forward_kernel<half>(m,
                                     input.get_half_ptr(),
                                     output.get_half_ptr(),
                                     gamma.get_half_ptr(),
-                                    beta.get_half_ptr(),
+                                    m->use_bias ? beta.get_half_ptr() : nullptr,
                                     stream);
   } else {
     assert(false && "unsupport datatype in layernorm");
@@ -489,6 +492,7 @@ void LayerNorm::backward_kernel(LayerNormMeta const *m,
                      static_cast<T *>(m->db_ptr),
                      static_cast<T *>(m->scale_ptr),
                      static_cast<T *>(m->bias_ptr));
+
   int const warp_size = C10_WARP_SIZE;
   int const num_threads = 128;
   const dim3 blocks(M);
@@ -566,12 +570,7 @@ void LayerNorm::backward_kernel_wrapper(LayerNormMeta const *m,
                                     stream);
 }
 
-// template void LayerNorm::forward_kernel_wrapper<float>(LayerNormMeta const
-// *m,
-//                                                        float const *in_ptr,
-//                                                        float *out_ptr,
-//                                                        float *gamma_ptr,
-//                                                        float *beta_ptr);
+
 template void
     LayerNorm::backward_kernel_wrapper<float>(LayerNormMeta const *m,
                                               float const *output_grad_ptr,
