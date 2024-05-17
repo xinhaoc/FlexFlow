@@ -1214,6 +1214,7 @@ void Graph::export_strategy_computation_graph(
   for (auto const &node : s.get_nodes(*this)) {
     // Add node
     if (strategy.find(node) == strategy.end()) {
+      dot.add_node(node, {{"label", node.to_string()}});
       // Check FusedParallel node here and print out the detailed information
       if (node.ptr->op_type == OperatorType::OP_FUSED_PARALLEL) {
         RecordFormatter rf;
@@ -1924,6 +1925,7 @@ void GraphSearchHelper::graph_optimize(
   this->logger->debug() << "Starting graph optimization";
 
   Graph *graph = this->construct_graph();
+  graph->print_dot();
   graph->duplicate_input_nodes();
   std::unordered_map<Node, MachineView> empty_strategy;
   if (!this->config.export_strategy_computation_graph_file.empty()) {
@@ -3622,6 +3624,7 @@ void FFModel::graph_optimize(
     this->graph_search->graph_optimize(
         budget, only_data_parallel, best_graph, optimal_views);
   }
+  best_graph->print_dot();
 }
 
 bool FFModel::convert_graph_to_operators(
@@ -3754,7 +3757,7 @@ bool FFModel::convert_graph_to_operators(
         assert(inList.size() == 1);
         Softmax *softmax = (Softmax *)node.ptr;
         new_op = new Softmax(
-            *this, softmax->layer_guid, inputs[0], softmax->dim, NULL);
+            *this, inputs[0], softmax->dim, softmax->last_layer, NULL);
         break;
       }
       case OP_COMBINE: {

@@ -1896,11 +1896,11 @@ namespace {
  */
 std::pair<std::unique_ptr<Graph>, std::unordered_map<Node, MachineView>>
     try_one_lambda(std::pair<float, MemorySearchResult> &lambda,
-                   Task const *task,
+                   FFModel *model,
                    std::shared_ptr<Simulator> &cached_simulator,
                    bool perform_memory_search) {
   // Create a new fresh model
-  FFModel *model = *((FFModel **)task->args);
+  //FFModel *model = *((FFModel **)task->args);
   model->clear_graph_search_cache();
 
   if (model->config.search_num_nodes.has_value()) {
@@ -1914,6 +1914,42 @@ std::pair<std::unique_ptr<Graph>, std::unordered_map<Node, MachineView>>
                                     model->config.workersPerNode,
                                     model->config.cpusPerNode,
                                     model->all_valid_views);
+  if (model->config.only_data_parallel) {
+    Graph *graph = new Graph(model);
+    graph->print_dot();
+    std::unordered_map<FlexFlow::Op const *, Node> op_to_node_map;
+    for (FlexFlow::Op const *dstOp : model->operators) {
+      Node dstNode;
+      dstNode.ptr = dstOp;
+      dstNode.guid = model->node_global_guid++;
+      op_to_node_map[dstOp] = dstNode;
+      for (int j = 0; j < dstOp->numInputs; j++) {
+        FlexFlow::Op const *srcOp = dstOp->inputs[j]->owner_op;
+        assert(op_to_node_map.find(srcOp) != op_to_node_map.end());
+        Node srcNode = op_to_node_map[srcOp];
+        graph->add_edge(srcNode, dstNode, dstOp->inputs[j]->owner_idx, j);
+      }
+    }
+    graph->print_dot();
+    std::unique_ptr<Graph> curr_best_graph;
+    std::unordered_map<Node, MachineView> curr_optimal_views;
+    curr_best_graph = std::unique_ptr<Graph>(graph);
+    MachineView data_parallel_view;
+    data_parallel_view.device_type = MachineView::GPU;
+    data_parallel_view.ndims = 1;
+    data_parallel_view.dim[0] =
+        model->config.numNodes * model->config.workersPerNode;
+    data_parallel_view.stride[0] = 1;
+    data_parallel_view.start_device_id = 0;
+    for (auto const &node : curr_best_graph->inEdges) {
+      curr_optimal_views[node.first] = data_parallel_view;
+    }
+    return std::make_pair(std::move(curr_best_graph), curr_optimal_views);
+  }
+
+  Runtime *runtime = model->config.lg_hlr;
+  Context ctx = model->config.lg_ctx;
+  const Task* task = runtime->get_current_task(ctx);
   Memory gpu_mem = Machine::MemoryQuery(Machine::get_machine())
                        .only_kind(Memory::GPU_FB_MEM)
                        .best_affinity_to(task->target_proc)
@@ -1949,7 +1985,6 @@ std::pair<std::unique_ptr<Graph>, std::unordered_map<Node, MachineView>>
   // Perform the search
   std::unique_ptr<Graph> curr_best_graph;
   std::unordered_map<Node, MachineView> curr_optimal_views;
-
   if (model->config.only_data_parallel) {
     Graph *graph = new Graph(model);
     std::unordered_map<FlexFlow::Op const *, Node> op_to_node_map;
@@ -2104,12 +2139,20 @@ bool is_valid_strategy(
  * @param runtime Not used
  * @return GraphOptimalViewSerialized Serialized optimal PCG
  */
+
 GraphOptimalViewSerialized
     Graph::graph_optimize_task(Task const *task,
                                std::vector<PhysicalRegion> const &regions,
                                Context ctx,
                                Runtime *runtime) {
-  auto model_config = (*((FFModel **)task->args))->config;
+  FFModel* model = *((FFModel **)task->args);
+  return Graph::graph_optimize_wrapper(model);
+}
+
+/*static*/
+GraphOptimalViewSerialized
+    Graph::graph_optimize_wrapper(FFModel *model) {
+  auto model_config = model->config;
   bool perform_memory_search = model_config.perform_memory_search;
   float memory_threshold = model_config.device_mem;
   bool only_data_parallel = model_config.only_data_parallel;
@@ -2125,7 +2168,7 @@ GraphOptimalViewSerialized
   // Be optimistic
   lambdas.emplace_back(std::make_pair(1.0, MemorySearchResult{}));
   auto try_result = try_one_lambda(
-      lambdas.back(), task, cached_simulator, perform_memory_search);
+      lambdas.back(), model, cached_simulator, perform_memory_search);
   best_graph = std::move(try_result.first);
   optimal_views = try_result.second;
 
@@ -2141,7 +2184,7 @@ GraphOptimalViewSerialized
     // Not found the strategy; need to do binary search
     lambdas.emplace_back(std::make_pair(0.0, MemorySearchResult{}));
     try_result = try_one_lambda(
-        lambdas.back(), task, cached_simulator, perform_memory_search);
+        lambdas.back(), model, cached_simulator, perform_memory_search);
     best_graph = std::move(try_result.first);
     optimal_views = try_result.second;
 
@@ -2168,7 +2211,7 @@ GraphOptimalViewSerialized
 
         lambdas.emplace_back(std::make_pair(mid, MemorySearchResult{}));
         try_result = try_one_lambda(
-            lambdas.back(), task, cached_simulator, perform_memory_search);
+            lambdas.back(), model, cached_simulator, perform_memory_search);
 
         if (!is_valid_strategy(lambdas,
                                try_result.first.get(),
@@ -2396,6 +2439,12 @@ GraphOptimalViewSerialized
         sez.serialize(attn->tensor_parallelism_degree);
         sez.serialize(strlen(attn->name));
         sez.serialize(attn->name, strlen(attn->name));
+        break;
+      }
+      case OP_SOFTMAX: {
+        Softmax *softmax = (Softmax *)op;
+        sez.serialize(softmax->dim);
+        sez.serialize(softmax->last_layer);
         break;
       }
       case OP_REPARTITION: {
@@ -3021,7 +3070,13 @@ void FFModel::deserialize_graph_optimal_view(
         break;
       }
       case OP_SOFTMAX: {
-        node = Softmax::deserialize(*this, dez, inputs, num_inputs);
+        assert(num_inputs == 1);
+        int softmax_dim;
+        bool last_layer;
+        dez.deserialize(softmax_dim);
+        dez.deserialize(last_layer);
+        node =
+            get_or_create_node<Softmax>(inputs[0], {softmax_dim, last_layer});
         break;
       }
       case OP_TRANSPOSE: {

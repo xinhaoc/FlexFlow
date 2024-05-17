@@ -239,6 +239,9 @@ ElementBinary::ElementBinary(FFModel &model,
       numdim, dims, in1->data_type, this);
   broadcast_input1 = (inputs[0]->get_volume() != outputs[0]->get_volume());
   broadcast_input2 = (inputs[1]->get_volume() != outputs[0]->get_volume());
+
+  batch_size = dims[numdim - 2].size;
+  
 }
 
 ElementBinary::ElementBinary(
@@ -438,6 +441,8 @@ OpMeta *ElementBinary::init_task(Task const *task,
   m->has_same_operands = eb->has_same_operands;
   m->broadcast_input1 = eb->broadcast_input1;
   m->broadcast_input2 = eb->broadcast_input2;
+  m->batch_size = eb->batch_size;
+
   std::strcpy(m->op_name, eb->name);
   m->layer_guid = eb->layer_guid;
   Domain input1_domain = runtime->get_index_space_domain(
@@ -470,6 +475,10 @@ OpMeta *ElementBinary::init_task(Task const *task,
   } else {
     output_domain = input1_domain;
   }
+  m->replicate_size = m->broadcast_input1
+                          ? (input1_domain.get_volume() / m->batch_size)
+                          : (input2_domain.get_volume() / m->batch_size);
+
   assert(task->regions.size() == regions.size());
   assert(regions.size() == num_regions);
   init_kernel(m, input1_domain, input2_domain, output_domain);
@@ -483,7 +492,7 @@ void ElementBinary::forward(FFModel const &ff) {
   set_argumentmap_for_forward(ff, argmap);
   IndexLauncher launcher(ELEMENTBINARY_FWD_TASK_ID,
                          parallel_is,
-                         TaskArgument(NULL, 0),
+                         TaskArgument(this, sizeof(ElementBinary)),
                          argmap,
                          Predicate::TRUE_PRED,
                          false /*must*/,
@@ -740,7 +749,7 @@ __host__ void
                                 std::vector<PhysicalRegion> const &regions,
                                 Context ctx,
                                 Runtime *runtime) {
-  // const ElementBinary* ele = (const ElementBinary*) task->args;
+  ElementBinary const *ele = (ElementBinary const *)task->args;
   ElementBinaryMeta const *m = *((ElementBinaryMeta **)task->local_args);
   GenericTensorAccessorR in1, in2;
   GenericTensorAccessorW out;

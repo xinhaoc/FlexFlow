@@ -59,7 +59,7 @@ FF_USE_PYTHON=${FF_USE_PYTHON:-ON}
 FF_LEGION_NETWORKS=${FF_LEGION_NETWORKS:-}
 
 # select GASNET conduit
-FF_GASNET_CONDUIT=${FF_GASNET_CONDUIT:-ibv}
+FF_GASNET_CONDUIT=${FF_GASNET_CONDUIT:-ofi}
 
 # set UCX dir if Legion networks is set to ucx
 UCX_DIR=${UCX_DIR:-""}
@@ -99,11 +99,9 @@ FF_GPU_BACKEND=${FF_GPU_BACKEND:-cuda}
 if [[ "${FF_GPU_BACKEND}" != @(cuda|hip_cuda|hip_rocm|intel) ]]; then
   echo "Error, value of FF_GPU_BACKEND (${FF_GPU_BACKEND}) is invalid."
   exit 1
-elif [[ "$FF_GPU_BACKEND" == "cuda" || "$FF_GPU_BACKEND" = "hip_cuda" || "$FF_GPU_BACKEND" == "hip_rocm" ]]; then
+elif [["$FF_GPU_BACKEND" == "cuda" || "$FF_GPU_BACKEND" = "hip_cuda" || "$FF_GPU_BACKEND" == "hip_rocm"]]; then
     # enable NCCL
     FF_USE_NCCL=${FF_USE_NCCL:-ON}
-else
-    FF_USE_NCCL=OFF
 fi
 
 function get_build_configs() {

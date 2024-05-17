@@ -9,6 +9,7 @@ struct SoftmaxParams {
   LayerID layer_guid;
   int dim;
   char name[MAX_OPNAME];
+  bool last_layer;
   bool is_valid(ParallelTensorShape const &) const;
 };
 bool operator==(SoftmaxParams const &, SoftmaxParams const &);

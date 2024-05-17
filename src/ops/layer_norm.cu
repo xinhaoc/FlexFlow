@@ -56,6 +56,7 @@ LayerNormMeta::~LayerNormMeta(void) {
   if (reserveInst != Realm::RegionInstance::NO_INST) {
     reserveInst.destroy();
   }
+
 }
 
 template <typename T>
@@ -220,7 +221,6 @@ void LayerNorm::forward_kernel(LayerNormMeta const *m,
                                T const *gamma_ptr,
                                T const *beta_ptr,
                                cudaStream_t stream) {
-
   std::pair<int, int> kernel1_parallelism =
       std::make_pair(m->effective_batch_size, kCUDABlockReduceNumThreads);
   std::pair<int, int> kernel2_parallelism =
@@ -585,7 +585,6 @@ void LayerNorm::backward_kernel(LayerNormMeta const *m,
       gamma_ptr,
       input_grad_ptr,
       N);
-
   if (gamma_grad_ptr != NULL || beta_grad_ptr != NULL) {
     if (M < 512) {
       // For small batch size, do colwise reduce directly
@@ -649,6 +648,7 @@ void LayerNorm::backward_kernel_wrapper(LayerNormMeta const *m,
   //                                   beta_grad_ptr,
   //                                   stream);
   // }
+
 }
 
 template void

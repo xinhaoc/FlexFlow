@@ -23,7 +23,7 @@
   do {                                                                         \
     std::stringstream _error;                                                  \
     if (status != miopenStatusSuccess) {                                       \
-      _error << "CUDNN failure: " << status;                                   \
+      _error << "CUDNN failure: " << miopenGetErrorString(status);             \
       FatalError(_error.str());                                                \
     }                                                                          \
   } while (0)
@@ -150,6 +150,10 @@ miopenStatus_t
     cudnnSetTensorDescriptorFromDomain(miopenTensorDescriptor_t tensor,
                                        Legion::Domain domain,
                                        DataType data_type = DT_FLOAT);
+
+miopenStatus_t
+    cudnnSetTensorDescriptorFromDomain4SoftMax(miopenTensorDescriptor_t tensor,
+                                               Legion::Domain domain);
 
 miopenStatus_t
     cudnnSetTensorDescriptorFromDomain4SoftMax(miopenTensorDescriptor_t tensor,

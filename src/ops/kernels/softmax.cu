@@ -32,6 +32,7 @@ SoftmaxMeta::SoftmaxMeta(FFHandler handler,
   checkCUDNN(cudnnSetTensorDescriptorFromDomain4SoftMax(
       outputTensor, input_domain, softmax->data_type));
   dim = softmax->dim;
+  last_layer = softmax->last_layer;
   profiling = softmax->profiling;
   inference_debugging = softmax->inference_debugging;
   std::strcpy(op_name, softmax->name);
@@ -72,6 +73,7 @@ template <typename DT>
 void backward_kernel_wrapper(SoftmaxMeta const *m,
                              DT *input_grad_ptr,
                              DT const *output_grad_ptr,
+                             DT const *output_ptr,
                              size_t num_elements) {
   cudaStream_t stream;
   checkCUDA(get_legion_stream(&stream));
@@ -83,7 +85,7 @@ void backward_kernel_wrapper(SoftmaxMeta const *m,
     cudaEventRecord(t_start, stream);
   }
   Internal::backward_kernel(
-      input_grad_ptr, output_grad_ptr, num_elements, stream);
+      m, input_grad_ptr, output_grad_ptr, output_ptr, num_elements, stream);
   if (m->profiling) {
     cudaEventRecord(t_end, stream);
     checkCUDA(cudaEventSynchronize(t_end));
@@ -135,15 +137,33 @@ void forward_kernel(SoftmaxMeta const *m,
 }
 
 template <typename DT>
-void backward_kernel(DT *input_grad_ptr,
+void backward_kernel(SoftmaxMeta const *m,
+                     DT *input_grad_ptr,
                      DT const *output_grad_ptr,
+                     DT const *output_ptr,
                      size_t num_elements,
                      cudaStream_t stream) {
-  checkCUDA(cudaMemcpyAsync(input_grad_ptr,
-                            output_grad_ptr,
-                            num_elements * sizeof(DT),
-                            cudaMemcpyDeviceToDevice,
-                            stream));
+
+  if (m->last_layer) {
+    checkCUDA(cudaMemcpyAsync(input_grad_ptr,
+                              output_grad_ptr,
+                              num_elements * sizeof(DT),
+                              cudaMemcpyDeviceToDevice,
+                              stream));
+  } else {
+    float alpha = 1.0f, beta = 0.0f;
+    checkCUDNN(cudnnSoftmaxBackward(m->handle.dnn,
+                                    CUDNN_SOFTMAX_ACCURATE,
+                                    CUDNN_SOFTMAX_MODE_CHANNEL,
+                                    &alpha,
+                                    m->inputTensor,
+                                    output_ptr,
+                                    m->inputTensor,
+                                    output_grad_ptr,
+                                    &beta,
+                                    m->inputTensor,
+                                    input_grad_ptr));
+  }
 }
 
 } // namespace Internal

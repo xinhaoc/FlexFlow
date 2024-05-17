@@ -118,6 +118,11 @@ if [ "$FF_LEGION_NETWORKS" = "gasnet" ]; then
     SET_LEGION_NETWORKS+=" -DFF_GASNET_CONDUIT=mpi"
   elif [ "$FF_GASNET_CONDUIT" = "udp" ]; then
     SET_LEGION_NETWORKS+=" -DFF_GASNET_CONDUIT=udp"
+  elif [ "$FF_GASNET_CONDUIT" = "ucx" ]; then
+    SET_LEGION_NETWORKS+=" -DFF_GASNET_CONDUIT=ucx"
+    SET_LEGION_NETWORKS+=" -DFF_UCX_URL=$FF_UCX_URL"
+  elif [ "$FF_GASNET_CONDUIT" = "ofi" ]; then 
+    SET_LEGION_NETWORKS+=" -DFF_GASNET_CONDUIT=ofi"
   fi
 elif [ "$FF_LEGION_NETWORKS" = "ucx" ]; then
   SET_LEGION_NETWORKS+=" -DFF_LEGION_NETWORKS=ucx"
@@ -235,7 +240,7 @@ if [ -n "$FF_GPU_BACKEND" ]; then
         SET_CXX="-DCMAKE_CXX_COMPILER=$(pwd)/nvidia_hipcc -DCMAKE_CXX_LINKER=$(pwd)/nvidia_hipcc"
       else
         ADD_ROCM_TO_PATH="PATH=${PATH}:${ROCM_PATH}/bin"
-        #SET_CXX="-DCMAKE_CXX_COMPILER=/opt/rocm/bin/hipcc -DCMAKE_CXX_LINKER=/opt/rocm/bin/hipcc"
+        SET_CXX="-DCMAKE_CXX_COMPILER=$ROCM_PATH/bin/hipcc -DCMAKE_CXX_LINKER=$ROCM_PATH/bin/hipcc -DHIP_PATH=$ROCM_PATH/hip -DCMAKE_CXX_FLAGS='-I${MPICH_DIR}/include' -DCMAKE_EXE_LINKER_FLAGS='-L${MPICH_DIR}/lib -lmpi' -DCMAKE_SHARED_LINKER_FLAGS='-L${MPICH_DIR}/lib -lmpi'"
       fi
     fi
   fi

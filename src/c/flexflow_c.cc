@@ -916,10 +916,11 @@ flexflow_tensor_t flexflow_model_add_gather(flexflow_model_t handle_,
 flexflow_tensor_t flexflow_model_add_softmax(flexflow_model_t handle_,
                                              const flexflow_tensor_t input_,
                                              int dim,
+                                             bool last_layer,
                                              char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
   Tensor input = FFCObjectWrapper::unwrap(input_);
-  Tensor tensor = handle->softmax(input, dim, input->data_type, name);
+  Tensor tensor = handle->softmax(input, dim, input->data_type, last_layer, name);
   DEBUG_PRINT(
       "[Softmax] new Tensor %p, input %p, name %s", tensor, input, name);
   return FFCObjectWrapper::wrap(tensor);

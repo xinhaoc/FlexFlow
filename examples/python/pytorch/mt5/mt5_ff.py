@@ -3,16 +3,17 @@ import os
 import sys
 
 import numpy as np
+import torch
 from flexflow.core import *
 from flexflow.torch.model import PyTorchModel
-from transformers import MT5ForConditionalGeneration, T5Tokenizer
-
+#from transformers import MT5ForConditionalGeneration, T5Tokenizer
+from transformers import BertForMaskedLM, BertTokenizer
 sys.path.append("./examples/python/pytorch/mt5")
 from mt5_torch import DataPreparer, get_dataloaders, set_seed
 
 BASE_DIR = "examples/python/pytorch/mt5"
 DATA_DIR = os.path.join(BASE_DIR, "data")
-NUMPY_DIR = os.path.join(DATA_DIR, "numpy")
+NUMPY_DIR = os.path.join(DATA_DIR, "numpy_candle")
 
 
 def data_to_numpy() -> None:
@@ -28,7 +29,8 @@ def data_to_numpy() -> None:
     """
     model_params = {
         "SEED": 42,
-        "MODEL": "google/mt5-small",
+        #"MODEL": "google/mt5-small",
+        "MODEL": "bert-base-uncased",
         "TRAIN_BATCH_SIZE": None,  # use the full dataset as one batch
         "EVAL_BATCH_SIZE": None,   # use the full dataset as one batch
         "TRAIN_EPOCHS": 1,         # unused
@@ -36,7 +38,8 @@ def data_to_numpy() -> None:
         "MAX_TARGET_TEXT_LENGTH": 48,
     }
     set_seed(model_params)
-    tokenizer = T5Tokenizer.from_pretrained(model_params["MODEL"])
+    #tokenizer = T5Tokenizer.from_pretrained(model_params["MODEL"])
+    tokenizer = BertTokenizer.from_pretrained(model_params["MODEL"])
     print("Getting dataloaders...")
     train_loader, eval_loader = get_dataloaders(tokenizer, model_params)
     assert len(train_loader) == 1
@@ -61,8 +64,8 @@ def preprocess_train() -> None:
     y_shape = y.shape
     assert len(y.shape) == 2, \
         "`y` should have shape (num examples, sequence length)"
-    y_ids = np.empty((y_shape[0], y_shape[1] - 1), dtype=np.long)
-    lm_labels = np.empty((y_shape[0], y_shape[1] - 1), dtype=np.long)
+    y_ids = np.empty((y_shape[0], y_shape[1] - 1), dtype=np.int32)
+    lm_labels = np.empty((y_shape[0], y_shape[1] - 1), dtype=np.int32)
     y_ids[:, :] = y[:, :-1]
     lm_labels[:, :] = y[:, 1:]
 
@@ -81,28 +84,42 @@ def preprocess_train() -> None:
 def top_level_task():
     ffconfig = FFConfig()
     ffmodel = FFModel(ffconfig)
-    model = MT5ForConditionalGeneration.from_pretrained("google/mt5-small")
-
+    #model = MT5ForConditionalGeneration.from_pretrained("google/mt5-small")
+    model = BertForMaskedLM.from_pretrained("bert-base-uncased")
+    #model = BertModel.from_pretrained("bert-base-uncased")
     # Load train data as numpy arrays
     print("Loading data...")
-    ids = np.load(os.path.join(NUMPY_DIR, "train_source_ids.npy"))
-    mask = np.load(os.path.join(NUMPY_DIR, "train_source_mask.npy"))
-    y_ids = np.load(os.path.join(NUMPY_DIR, "train_y_ids.npy"))
-    lm_labels = np.load(os.path.join(NUMPY_DIR, "train_lm_labels.npy"))
+    ids = np.load(os.path.join(NUMPY_DIR, "train_input_ids.npy")).astype('int32')
+    ids = np.pad(ids, ((0,0), (0,17)), 'constant')
+    #ids = np.random.randint(0, 5, (1000, 512))
+    #print('ids_shape', ids.shape)
+    #print('ids', ids)
+    mask = np.load(os.path.join(NUMPY_DIR, "train_attention_mask.npy")).astype('int32')
+    mask = np.pad(mask, ((0,0), (0,17)), 'constant')
+    #mask = np.random.randint(0, 2, (1000, 512))
+    #y_ids = np.load(os.path.join(NUMPY_DIR, "train_y_ids.npy"))
+    lm_labels = np.load(os.path.join(NUMPY_DIR, "train_labels.npy")).astype('int32')
+    lm_labels = np.pad(lm_labels, ((0,0), (0,17)), 'constant')
+    #lm_labels = np.random.randint(-1, 5, (1000, 512))
+    position_id = torch.arange(ids.shape[1], dtype=torch.int32).expand((1, -1)).numpy()
+    token_type_ids = torch.zeros(ids.shape[1], dtype=torch.int32).expand((1, -1)).numpy()
+
 
     batch_size = ffconfig.batch_size
     input_ids_shape = (batch_size, ids.shape[1])
     attention_mask_shape = (batch_size, mask.shape[1])
-    decoder_input_ids_shape = (batch_size, y_ids.shape[1])
+    #decoder_input_ids_shape = (batch_size, y_ids.shape[1])
     input_tensors = [
-        ffmodel.create_tensor(input_ids_shape, DataType.DT_INT64),          # input_ids
-        ffmodel.create_tensor(attention_mask_shape, DataType.DT_INT64),     # attention_mask
-        ffmodel.create_tensor(decoder_input_ids_shape, DataType.DT_INT64),  # decoder_input_ids
+        ffmodel.create_tensor(input_ids_shape, DataType.DT_INT32),          # input_ids
+        ffmodel.create_tensor(attention_mask_shape, DataType.DT_INT32),     # attention_mask
+        #ffmodel.create_tensor(decoder_input_ids_shape, DataType.DT_INT64),  # decoder_input_ids
     ]
     encoder_seq_length = ids.shape[1]
-    decoder_seq_length = y_ids.shape[1]
-    seq_length = (encoder_seq_length, decoder_seq_length)
-    input_names = ["input_ids", "attention_mask", "decoder_input_ids"]
+    #decoder_seq_length = y_ids.shape[1]
+    #seq_length = (encoder_seq_length, decoder_seq_length)
+    seq_length = encoder_seq_length
+    #input_names = ["input_ids", "attention_mask", "decoder_input_ids"]
+    input_names = ["input_ids", "attention_mask"]
 
     print("Tracing the model...")
     hf_model = PyTorchModel(
@@ -110,7 +127,10 @@ def top_level_task():
         batch_size=batch_size, seq_length=seq_length,
     )
     output_tensors = hf_model.torch_to_ff(ffmodel, input_tensors, verbose=True)
-    ffoptimizer = SGDOptimizer(ffmodel, lr=0.01)
+    #from flexflow.torch.model import file_to_ff
+    #file_to_ff("mt5.ff", ffmodel, input_tensors)
+    ffoptimizer = AdamOptimizer(ffmodel, alpha=1e-4, beta1=0.9, beta2=0.98, weight_decay=0.0, epsilon=2e-8)
+    # ffoptimizer = SGDOptimizer(ffmodel, lr=0.01)
 
     print("Compiling the model...")
     ffmodel.compile(
@@ -121,13 +141,21 @@ def top_level_task():
             MetricsType.METRICS_SPARSE_CATEGORICAL_CROSSENTROPY,
         ],
     )
+    
+    # load weights here
+    ffmodel.load_bert_pretrained(checkpoint=model)
 
     print("Creating data loaders...")
+    print('id_dtype', ids.dtype)
+    print('mask_dtype', mask.dtype)
+    print('labels_dtype', lm_labels.dtype)
     input_ids_dl = ffmodel.create_data_loader(input_tensors[0], ids)
     attention_mask_dl = ffmodel.create_data_loader(input_tensors[1], mask)
-    decoder_input_ids_dl = ffmodel.create_data_loader(input_tensors[2], y_ids)
+    #decoder_input_ids_dl = ffmodel.create_data_loader(input_tensors[2], y_ids)
     # NOTE: We cast down the label tensor data to 32-bit to accommodate the
     # label tensor's required dtype
+    token_type_ids_dl = ffmodel.create_data_loader(input_tensors[2], token_type_ids)
+    position_id_dl = ffmodel.create_data_loader(input_tensors[3], position_id)
     labels_dl = ffmodel.create_data_loader(
         ffmodel.label_tensor, lm_labels.astype("int32")
     )
@@ -138,31 +166,32 @@ def top_level_task():
     print("Training...")
     epochs = ffconfig.epochs
     ffmodel.fit(
-        x=[input_ids_dl, attention_mask_dl, decoder_input_ids_dl],
+        #x=[input_ids_dl, attention_mask_dl, decoder_input_ids_dl],
+        x=[input_ids_dl, attention_mask_dl, position_id_dl, token_type_ids_dl],
         y=labels_dl, batch_size=batch_size, epochs=epochs,
     )
 
 
 if __name__ == "__main__":
-    # Generate the .tsv files if needed
-    if not os.path.exists(os.path.join(DATA_DIR, "train.tsv")) or \
-            not os.path.exists(os.path.join(DATA_DIR, "eval.tsv")):
-        DataPreparer.data_to_tsv()
-    # Convert the .tsv files to .npy if needed
-    if not os.path.exists(NUMPY_DIR):
-        os.mkdir(NUMPY_DIR)
-    prefixes = ["train_", "eval_"]
-    suffixes = ["source_ids.npy", "source_mask.npy", "target_ids.npy"]
-    npy_filenames = [
-        pre + suf for pre, suf in itertools.product(prefixes, suffixes)
-    ]
-    if any(
-        not os.path.exists(os.path.join(NUMPY_DIR, filename))
-        for filename in npy_filenames
-    ):
-        data_to_numpy()
-    # Preprocess the training data if needed
-    if not os.path.exists(os.path.join(NUMPY_DIR, "train_y_ids.npy")) or \
-            not os.path.exists(os.path.join(NUMPY_DIR, "train_lm_labels.npy")):
-        preprocess_train()
+    ## Generate the .tsv files if needed
+    #if not os.path.exists(os.path.join(DATA_DIR, "train.tsv")) or \
+    #        not os.path.exists(os.path.join(DATA_DIR, "eval.tsv")):
+    #    DataPreparer.data_to_tsv()
+    ## Convert the .tsv files to .npy if needed
+    #if not os.path.exists(NUMPY_DIR):
+    #    os.mkdir(NUMPY_DIR)
+    #prefixes = ["train_", "eval_"]
+    #suffixes = ["source_ids.npy", "source_mask.npy", "target_ids.npy"]
+    #npy_filenames = [
+    #    pre + suf for pre, suf in itertools.product(prefixes, suffixes)
+    #]
+    #if any(
+    #    not os.path.exists(os.path.join(NUMPY_DIR, filename))
+    #    for filename in npy_filenames
+    #):
+    #    data_to_numpy()
+    ## Preprocess the training data if needed
+    #if not os.path.exists(os.path.join(NUMPY_DIR, "train_y_ids.npy")) or \
+    #        not os.path.exists(os.path.join(NUMPY_DIR, "train_lm_labels.npy")):
+    #    preprocess_train()
     top_level_task()

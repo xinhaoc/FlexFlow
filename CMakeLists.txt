@@ -168,6 +168,17 @@ if (FF_GPU_BACKEND STREQUAL "cuda" OR FF_GPU_BACKEND STREQUAL "hip_cuda")
   include(cudnn)
 endif()
 
+# NCCL
+if(FF_USE_NCCL)
+  if(FF_GPU_BACKEND STREQUAL "hip_cuda" OR FF_GPU_BACKEND STREQUAL "cuda")
+    include(nccl)
+  endif()
+  list(APPEND FF_CC_FLAGS
+    -DFF_USE_NCCL)
+  list(APPEND FF_NVCC_FLAGS
+    -DFF_USE_NCCL)
+endif()
+
 # Legion
 include(legion)
 
@@ -383,19 +394,78 @@ if(NOT BUILD_LEGION_ONLY)
     add_dependencies(flexflow ${NCCL_NAME})
   endif()
 
-  target_include_directories(flexflow PUBLIC ${FLEXFLOW_INCLUDE_DIRS})
-  # LEGION_URL is defined if we found a precompiled Legion library to download
-  if(LEGION_URL)
-    # Legion builds produce two library files: one for the Legion runtime and one for the Realm runtime. 
-    # When linking FlexFlow to a precompiled version of Legion, we need to manually link to both library files.
-    target_link_libraries(flexflow ${LEGION_LIBRARY} ${REALM_LIBRARY} ${FLEXFLOW_EXT_LIBRARIES} nlohmann_json::nlohmann_json mpark_variant optional)
-    add_dependencies(flexflow ${LEGION_NAME})
-  else()
-    # When building Legion from source, we do so by calling add_subdirectory(), and obtain a library with both the
-    # Legion and Realm runtimes. The library's name is saved into the LEGION_LIBRARY variable. Hence, we only need
-    # to link FlexFlow to ${LEGION_LIBRARY}
-    target_link_libraries(flexflow ${LEGION_LIBRARY} ${FLEXFLOW_EXT_LIBRARIES} nlohmann_json::nlohmann_json mpark_variant optional)
+  list(APPEND CMAKE_PREFIX_PATH ${ROCM_PATH}/hip ${ROCM_PATH})
+
+  find_package(hip REQUIRED)
+
+  if (FF_GPU_BACKEND STREQUAL "hip_cuda")
+    # The targets defined by the hip cmake config only target amd devices.
+    # For targeting nvidia devices, we'll make our own interface target,
+    # hip_device_nvidia, that includes the rocm and hip headers. 
+    add_library(hip_device_nvidia INTERFACE)
+
+    if (NOT FF_CUDA_ARCH STREQUAL "")
+      target_compile_options(hip_device_nvidia INTERFACE -arch=compute_${FF_CUDA_ARCH})
+    endif()
+
+    target_include_directories(hip_device_nvidia SYSTEM INTERFACE ${HIP_INCLUDE_DIRS} ${ROCM_PATH}/include)
+    target_include_directories(hip_device_nvidia INTERFACE ${HIP_INCLUDE_DIRS} ${ROCM_PATH}/include)
+
+    add_compile_definitions(FF_USE_HIP_CUDA)
+
+    # Linking cuda: 
+    # We do not explicitly link cuda. hipcc when targeting nvidia will 
+    # use nvcc under the hood. nvcc when used for linking will handle 
+    # linking cuda dependencies
+    target_link_libraries(flexflow hip_device_nvidia)
+  elseif(FF_GPU_BACKEND STREQUAL "hip_rocm")
+    find_package(hipblas REQUIRED)
+    find_package(miopen REQUIRED)
+    if(FF_USE_NCCL)
+      find_package(rccl REQUIRED)
+    endif()
+    # find_package(rocrand REQUIRED)
+    find_library(HIP_RAND_LIBRARY hiprand REQUIRED)
+
+    add_compile_definitions(FF_USE_HIP_ROCM)
+    # The hip cmake config module defines three targets, 
+    # hip::amdhip64, hip::host, and hip::device.
+    #
+    # hip::host and hip::device are interface targets. hip::amdhip64 is an 
+    # imported target for libamdhip.
+    #
+    # You do not directly link to hip::amdhip64. hip::host links to hip::amdhip64
+    # and hip::device links to hip::host. Link to hip::host to just use hip without 
+    # compiling any GPU code. Link to hip::device to compile the GPU device code.
+    #
+    # Docs (outdated):
+    # https://rocmdocs.amd.com/en/latest/Installation_Guide/Using-CMake-with-AMD-ROCm.html
+    target_link_libraries(flexflow hip::device roc::hipblas MIOpen ${HIP_RAND_LIBRARY})
+    if(FF_USE_NCCL)
+        target_link_libraries(flexflow rccl)
+    endif()
   endif()
+else()
+  message(FATAL_ERROR "Unsupported FF_GPU_BACKEND for cmake: ${FF_GPU_BACKEND}")
+endif()
+
+if(FF_USE_NCCL AND (FF_GPU_BACKEND STREQUAL "hip_cuda" OR FF_GPU_BACKEND STREQUAL "cuda"))
+  add_dependencies(flexflow ${NCCL_NAME})
+endif()
+
+target_include_directories(flexflow PUBLIC ${FLEXFLOW_INCLUDE_DIRS})
+# LEGION_URL is defined if we found a precompiled Legion library to download
+if(LEGION_URL)
+  # Legion builds produce two library files: one for the Legion runtime and one for the Realm runtime. 
+  # When linking FlexFlow to a precompiled version of Legion, we need to manually link to both library files.
+  target_link_libraries(flexflow ${LEGION_LIBRARY} ${REALM_LIBRARY} ${FLEXFLOW_EXT_LIBRARIES} nlohmann_json::nlohmann_json mpark_variant optional)
+  add_dependencies(flexflow ${LEGION_NAME})
+else()
+  # When building Legion from source, we do so by calling add_subdirectory(), and obtain a library with both the
+  # Legion and Realm runtimes. The library's name is saved into the LEGION_LIBRARY variable. Hence, we only need
+  # to link FlexFlow to ${LEGION_LIBRARY}
+  target_link_libraries(flexflow ${LEGION_LIBRARY} ${FLEXFLOW_EXT_LIBRARIES} nlohmann_json::nlohmann_json mpark_variant optional)
+endif()
 
   #library api version, bump from time to time
   set(SOVERSION 1)

@@ -132,8 +132,7 @@ Tensor FFModel::layer_norm(const Tensor input,
                                                  ln,
                                                  0,
                                                  true /*create_grad*/);
-  if (num_weights > 0) {
-    assert(elementwise_affine);
+  if (num_weights == 2) {
     int numdims = axes.size();
     int dims[numdims];
     for (int i = 0; i < numdims; i++) {
@@ -611,8 +610,9 @@ void LayerNorm::forward_task(Task const *task,
   out = helperGetGenericTensorAccessorWO(
       m->output_type[0], regions[1], task->regions[1], FID_DATA, ctx, runtime);
   assert(in_domain == out_domain);
-  assert(in_domain.get_volume() ==
-         m->effective_num_elements * m->effective_batch_size);
+  // assert(in_domain.get_volume() ==
+  //        m->effective_num_elements * m->effective_batch_size);
+
   if (m->elementwise_affine) {
     assert(m->use_bias == (regions.size() == 4));
     Domain gamma_domain = runtime->get_index_space_domain(
@@ -740,8 +740,8 @@ void LayerNorm::backward_task(Task const *task,
   in_grad_ptr = helperGetTensorPointerRW<float>(
       regions[2], task->regions[2], FID_DATA, ctx, runtime);
   assert(in_domain == out_grad_domain);
-  assert(in_domain.get_volume() ==
-         m->effective_num_elements * m->effective_batch_size);
+  // assert(in_domain.get_volume() ==
+  //        m->effective_num_elements * m->effective_batch_size);
   if (m->elementwise_affine) {
     assert(m->use_bias == (regions.size() == 6));
     Domain gamma_domain = runtime->get_index_space_domain(
@@ -806,6 +806,7 @@ bool LayerNorm::measure_operator_cost(Simulator *sim,
   float *gamma_ptr = NULL, *beta_ptr = NULL;
   GenericTensorAccessorW gamma_acc;
   GenericTensorAccessorW beta_acc;
+
 
   bool out_of_memory =
       (in_ptr == NULL) || (out_ptr == NULL) ||

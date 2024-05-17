@@ -24,6 +24,7 @@ public:
   bool inference_debugging;
   int dim;
   DataType input_type, output_type;
+  bool last_layer;
 };
 
 namespace Kernels {
@@ -36,6 +37,7 @@ template <typename DT>
 void backward_kernel_wrapper(SoftmaxMeta const *m,
                              DT *input_grad_ptr,
                              DT const *output_grad_ptr,
+                             DT const *output_ptr,
                              size_t num_elements);
 
 namespace Internal {
@@ -46,8 +48,10 @@ void forward_kernel(SoftmaxMeta const *m,
                     ffStream_t stream);
 
 template <typename DT>
-void backward_kernel(DT *input_grad_ptr,
+void backward_kernel(SoftmaxMeta const *m,
+                     DT *input_grad_ptr,
                      DT const *output_grad_ptr,
+                     DT const *output_ptr,
                      size_t num_elements,
                      ffStream_t stream);
 } // namespace Internal

@@ -256,9 +256,10 @@ void Replicate::forward(FFModel const &ff) {
   assert(numOutputs == 1);
   assert(numInputs == 1);
   set_argumentmap_for_forward(ff, argmap);
+  DataType data_type = inputs[0]->data_type;
   IndexLauncher launcher(REPLICATE_FWD_TASK_ID,
                          outputs[0]->parallel_is,
-                         TaskArgument(NULL, 0),
+                         TaskArgument(&data_type, sizeof(DataType)),
                          argmap,
                          Predicate::TRUE_PRED,
                          false /*must*/,
@@ -284,7 +285,7 @@ void Replicate::backward(FFModel const &ff) {
   assert(numInputs == 1);
   IndexLauncher launcher(REPLICATE_BWD_TASK_ID,
                          inputs[0]->parallel_is,
-                         TaskArgument(NULL, 0),
+                         TaskArgument(&data_type, sizeof(DataType)),
                          argmap,
                          Predicate::TRUE_PRED,
                          false /*must*/,
@@ -342,14 +343,20 @@ bool Replicate::append_parallel_op_info(
   return true;
 }
 
+void Replicate::init_task(Task const *task,
+                          std::vector<PhysicalRegion> const &regions,
+                          Context ctx,
+                          Runtime *runtime) {}
+
+/*static*/
 void Replicate::forward_task(Task const *task,
                              std::vector<PhysicalRegion> const &regions,
                              Context ctx,
                              Runtime *runtime) {
   assert(regions.size() == 2);
   assert(task->regions.size() == 2);
-
   ReplicateMeta const *m = *((ReplicateMeta **)task->local_args);
+
 
   Domain input_domain = runtime->get_index_space_domain(
       ctx, task->regions[0].region.get_index_space());
@@ -361,7 +368,6 @@ void Replicate::forward_task(Task const *task,
     assert(output_domain.hi()[i] == input_domain.hi()[i]);
   }
   assert(input_domain.get_volume() == output_domain.get_volume());
-
   GenericTensorAccessorR input = helperGetGenericTensorAccessorRO(
       m->input_type[0], regions[0], task->regions[0], FID_DATA, ctx, runtime);
   GenericTensorAccessorW output = helperGetGenericTensorAccessorWO(
@@ -387,6 +393,28 @@ void Replicate::backward_task(Task const *task,
                               Runtime *runtime) {
   assert(regions.size() == 2);
   assert(task->regions.size() == 2);
+  DataType data_type = *((DataType *)task->args);
+  if (data_type == DT_FLOAT) {
+    backward_task_with_type<float>(task, regions, ctx, runtime);
+  } else if (data_type == DT_DOUBLE) {
+    backward_task_with_type<double>(task, regions, ctx, runtime);
+  } else if (data_type == DT_INT32) {
+    backward_task_with_type<int32_t>(task, regions, ctx, runtime);
+  } else if (data_type == DT_INT64) {
+    backward_task_with_type<int64_t>(task, regions, ctx, runtime);
+  } else {
+    assert(false && "Unsupported data type in Embedding forward");
+  }
+}
+
+template <typename T>
+void Replicate::backward_task_with_type(
+    Task const *task,
+    std::vector<PhysicalRegion> const &regions,
+    Context ctx,
+    Runtime *runtime) {
+  assert(regions.size() == 2);
+  assert(task->regions.size() == 2);
   Domain output_grad_domain = runtime->get_index_space_domain(
       ctx, task->regions[0].region.get_index_space());
   Domain input_grad_domain = runtime->get_index_space_domain(
@@ -398,12 +426,12 @@ void Replicate::backward_task(Task const *task,
   }
   size_t num_elements = input_grad_domain.get_volume();
   size_t num_replicas = output_grad_domain.get_volume() / num_elements;
-  float const *output_grad_ptr = helperGetTensorPointerRO<float>(
+  T const *output_grad_ptr = helperGetTensorPointerRO<T>(
       regions[0], task->regions[0], FID_DATA, ctx, runtime);
-  float *input_grad_ptr = helperGetTensorPointerRW<float>(
+  T *input_grad_ptr = helperGetTensorPointerRW<T>(
       regions[1], task->regions[1], FID_DATA, ctx, runtime);
 
-  backward_kernel<float>(
+  backward_kernel<T>(
       output_grad_ptr, input_grad_ptr, num_elements, num_replicas);
 }
 

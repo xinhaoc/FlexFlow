@@ -61,7 +61,11 @@ class TensorShapePrinter:
             size = dim['size']
             degree = dim['degree']
             parallel_idx = dim['parallel_idx']
-            toks.append(f'{i}=[s={size} d={degree} pi={parallel_idx}]')
+            if dim['is_replica_dim']:
+                is_replica = 'r=t'
+            else:
+                is_replica = 'r=f'
+            toks.append(f'{i}=[s={size} d={degree} pi={parallel_idx} {is_replica}]') 
         return f'TensorShape<{" ".join(toks)}>'
 
 class ParallelTensorBasePrinter:
@@ -77,8 +81,30 @@ class ParallelTensorBasePrinter:
             size = dim['size']
             degree = dim['degree']
             parallel_idx = dim['parallel_idx']
-            toks.append(f'{i}=[s={size} d={degree} pi={parallel_idx}]')
+            tok = f'{i}=[s={size} d={degree} pi={parallel_idx} '
+            if dim['is_replica_dim']:
+                tok += 'r=t'
+            else:
+                tok += 'r=f'
+            tok += ']'
+            toks.append(tok)
         return f'ParallelTensorBase<{" ".join(toks)}>'
+
+class ParallelDimPrinter: 
+    def __init__(self, val):
+        self.val = val
+
+    def to_string(self):
+        size = self.val['size']
+        degree = self.val['degree']
+        parallel_idx = self.val['parallel_idx']
+        tok = f's={size} d={degree} pi={parallel_idx} '
+        if dim['is_replica_dim']:
+            tok += 'r=t'
+        else:
+            tok += 'r=f'
+        return f'ParallelDim<{tok}>'
+        
 
 def build_pretty_printer():
     pp = gdb.printing.RegexpCollectionPrettyPrinter(
@@ -89,6 +115,7 @@ def build_pretty_printer():
     pp.add_printer('Domain', '^Legion::Domain$', DomainPrinter)
     pp.add_printer('ParallelTensorShape', '^FlexFlow::ParallelTensorShape$', TensorShapePrinter)
     pp.add_printer('ParallelTensorBase', '^FlexFlow::ParallelTensorBase$', ParallelTensorBasePrinter)
+    pp.add_printer('ParallelDim', '^FlexFlow::ParallelDim$', ParallelDimPrinter)
     return pp
 
 gdb.printing.register_pretty_printer(

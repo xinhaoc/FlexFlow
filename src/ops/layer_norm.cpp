@@ -14,6 +14,7 @@
  */
 
 #include "flexflow/ops/layer_norm.h"
+#include "flexflow/ffconst_utils.h"
 #include "flexflow/utils/hip_helper.h"
 #include <hip/hip_runtime.h>
 
@@ -33,12 +34,26 @@ LayerNormMeta::LayerNormMeta(FFHandler handle,
   effective_num_elements = ln->effective_num_elements;
   use_bias = ln->use_bias;
   eps = ln->eps;
-  checkCUDA(hipMalloc(&mean_ptr, sizeof(float) * effective_batch_size));
-  checkCUDA(hipMalloc(&rstd_ptr, sizeof(float) * effective_batch_size));
-  checkCUDA(hipMalloc(&ds_ptr, sizeof(float) * effective_batch_size));
-  checkCUDA(hipMalloc(&db_ptr, sizeof(float) * effective_batch_size));
-  checkCUDA(hipMalloc(&scale_ptr, sizeof(float) * effective_batch_size));
-  checkCUDA(hipMalloc(&bias_ptr, sizeof(float) * effective_batch_size));
+  // checkCUDA(hipMalloc(&mean_ptr, sizeof(float) * effective_batch_size));
+  // checkCUDA(hipMalloc(&rstd_ptr, sizeof(float) * effective_batch_size));
+  // checkCUDA(hipMalloc(&ds_ptr, sizeof(float) * effective_batch_size));
+  // checkCUDA(hipMalloc(&db_ptr, sizeof(float) * effective_batch_size));
+  // checkCUDA(hipMalloc(&scale_ptr, sizeof(float) * effective_batch_size));
+  // checkCUDA(hipMalloc(&bias_ptr, sizeof(float) * effective_batch_size));
+
+  DataType data_type = ln->data_type;
+  checkCUDA(
+      hipMalloc(&mean_ptr, data_type_size(data_type) * effective_batch_size));
+  checkCUDA(
+      hipMalloc(&rstd_ptr, data_type_size(data_type) * effective_batch_size));
+  checkCUDA(
+      hipMalloc(&ds_ptr, data_type_size(data_type) * effective_batch_size));
+  checkCUDA(
+      hipMalloc(&db_ptr, data_type_size(data_type) * effective_batch_size));
+  checkCUDA(
+      hipMalloc(&scale_ptr, data_type_size(data_type) * effective_batch_size));
+  checkCUDA(
+      hipMalloc(&bias_ptr, data_type_size(data_type) * effective_batch_size));
 }
 
 LayerNormMeta::~LayerNormMeta(void) {}
@@ -554,6 +569,7 @@ void LayerNorm::backward_kernel_wrapper(LayerNormMeta const *m,
                                     beta_grad_ptr,
                                     stream);
 }
+
 
 template void
     LayerNorm::backward_kernel_wrapper<float>(LayerNormMeta const *m,

@@ -657,6 +657,7 @@ public:
   Tensor softmax(const Tensor input,
                  int dim = -1,
                  DataType data_type = DT_NONE,
+                 bool last_layer = false,
                  char const *name = NULL);
   // Create input tensors and constants
   Tensor transpose(const Tensor input,
