@@ -147,6 +147,8 @@ public:
   // Legion::FieldSpace field_space;
   bool benchmarking, profiling, perform_fusion;
   bool inference_debugging;
+  Legion::FieldSpace field_space;
+  bool syntheticInput;
   size_t simulator_work_space_size;
   size_t search_budget;
   float search_alpha;
@@ -165,6 +167,7 @@ public:
   int data_parallelism_degree;
   int tensor_parallelism_degree;
   int pipeline_parallelism_degree;
+
   // Control Tensor Op Math Conversion
   bool allow_tensor_op_math_conversion;
   std::string dataset_path;

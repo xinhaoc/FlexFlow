@@ -61,6 +61,15 @@ __global__ void copy_kernel(DT *dst, const DT *src, coord_t size) {
     dst[i] = src[i];
   }
 }
+template <typename DT>
+__global__ void copy_kernel_with_replicate(DT *dst,
+                                           const DT *src,
+                                           coord_t origin_size,
+                                           coord_t size) {
+  CUDA_KERNEL_LOOP(i, size) {
+    dst[i] = src[i % origin_size];
+  }
+}
 
 template <typename DT>
 __global__ void
@@ -635,6 +644,14 @@ template __global__ void
     copy_kernel<half>(half *dst, half const *src, coord_t size);
 template __global__ void
     copy_kernel<float>(float *dst, float const *src, coord_t size);
+template __global__ void copy_kernel_with_replicate<float>(float *dst,
+                                                           float const *src,
+                                                           coord_t origin_size,
+                                                           coord_t size);
+template __global__ void copy_kernel_with_replicate<int32_t>(
+    int32_t *dst, int32_t const *src, coord_t origin_size, coord_t size);
+template __global__ void copy_kernel_with_replicate<int64_t>(
+    int64_t *dst, int64_t const *src, coord_t origin_size, coord_t size);
 template __global__ void
     copy_kernel<double>(double *dst, double const *src, coord_t size);
 template __global__ void

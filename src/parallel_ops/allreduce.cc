@@ -100,6 +100,7 @@ void AllReduce::create_input_partition_inference(
   return;
 }
 
+
 OpMeta *AllReduce::init_task(Task const *task,
                              std::vector<PhysicalRegion> const &regions,
                              Context ctx,
@@ -224,6 +225,7 @@ FutureMap AllReduce::inference(FFModel const &ff,
   return runtime->execute_index_space(ctx, launcher);
 }
 
+
 void AllReduce::forward(FFModel const &ff) {
   ArgumentMap argmap;
   Context ctx = ff.config.lg_ctx;
@@ -261,6 +263,7 @@ void AllReduce::backward(FFModel const &ff) {
   Runtime *runtime = ff.config.lg_hlr;
   assert(numOutputs == 1);
   assert(numInputs == 1);
+  set_argumentmap_for_backward(ff, argmap);
   IndexLauncher launcher(ALLREDUCE_BWD_TASK_ID,
                          inputs[0]->parallel_is,
                          TaskArgument(NULL, 0),
@@ -339,6 +342,7 @@ void AllReduce::inference_task(Task const *task,
 }
 
 /*static*/
+
 void AllReduce::forward_task(Task const *task,
                              std::vector<PhysicalRegion> const &regions,
                              Context ctx,

@@ -673,7 +673,12 @@ bool ParallelTensorBase::set_tensor(FFModel const *ff,
   } else if (sync_type == ParameterSyncType::PS) {
     num_replicas = 1;
   } else {
-    num_replicas = 1;
+     for (int i = 0; i < this->num_dims; i++) {
+      if (this->dims[i].is_replica_dim) {
+        num_replicas *= this->dims[i].size;
+      }
+    }
+    // num_replicas = 1;
   }
   for (size_t i = 0; i < dim_sizes.size(); i++) {
     volume = volume * dim_sizes[i];

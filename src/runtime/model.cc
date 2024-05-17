@@ -63,6 +63,7 @@
 #include "flexflow/ops/topk.h"
 #include "flexflow/ops/transpose.h"
 #include "flexflow/ops/tree_inc_multihead_self_attention.h"
+
 #include "flexflow/parallel_ops/allreduce.h"
 #include "flexflow/parallel_ops/combine.h"
 #include "flexflow/parallel_ops/fused_parallel_op.h"
@@ -1144,6 +1145,9 @@ bool Op::check_output_input_weight_parallel_dims(bool allocate_weights) const {
         break;
     }
 
+    printf("other dim degree: %d, input dim degree %d\n",
+           other_dim.degree,
+           input_dim.degree);
     assert(other_dim.degree == input_dim.degree);
     assert(other_dim.parallel_idx == input_dim.parallel_idx);
   }
@@ -1153,18 +1157,25 @@ bool Op::check_output_input_weight_parallel_dims(bool allocate_weights) const {
 bool Op::check_output_input_weight_same_parallel_is() const {
   assert(numOutputs > 0);
   IndexSpace parallel_is = outputs[0]->parallel_is;
+  std::cout << "output space: "
+            << ", " << parallel_is << "\n";
   for (int i = 0; i < numOutputs; i++) {
     if (outputs[i]->parallel_is != parallel_is) {
+      std::cout << "output mismatch"
+                << "\n";
       return false;
     }
   }
   for (int i = 0; i < numInputs; i++) {
+    std::cout << "input space: " << i << ", " << inputs[i]->parallel_is << "\n";
     if (inputs[i]->parallel_is != parallel_is) {
       return false;
     }
   }
   for (int i = 0; i < numWeights; i++) {
     if (weights[i]->parallel_is != parallel_is) {
+      std::cout << "weight mismatch"
+                << "\n";
       return false;
     }
   }
@@ -1206,7 +1217,7 @@ void Op::set_argumentmap_for_init(FFModel const &ff, ArgumentMap &argmap) {
     for (PointInRectIterator<DIM> it(rect); it(); it++) {                      \
       FFHandler handle = ff.handlers[view.get_device_id(*it)];                 \
       if (ff.config.computationMode == COMP_MODE_TRAINING &&                   \
-          op_type == OP_WEIGHT) {                                              \
+          (op_type == OP_WEIGHT || op_type == OP_ALLREDUCE)) {                 \
         ncclComm_t *nccl_comms = ff.find_nccl_comms(view);                     \
         handle.ncclComm = nccl_comms[idx++];                                   \
       }                                                                        \
@@ -1518,6 +1529,7 @@ FFRuntime::FFRuntime(FFConfig &config) {
   ArgumentMap argmap;
   Domain domain = runtime->get_index_space_domain(ctx, config.all_gpu_task_is);
   Rect<1> task_rect = domain;
+
   // int rank = 0;
   for (PointInRectIterator<1> it(task_rect); it(); it++) {
     FFInitInfo info;
@@ -2896,6 +2908,10 @@ void FFModel::update() {
   }
 }
 
+void FFModel::unified_update() {
+  optimizer->unified_update(parameters);
+}
+
 Op *FFModel::get_final_operator() const {
   int idx = operators.size() - 1;
   while (operators[idx]->op_type == OP_INPUT ||
@@ -2930,6 +2946,7 @@ bool FFModel::apply_fusion(
       continue;
     }
     // don't fuse parallel op except allReduce since they have different
+
     // parallel_is in forward/backward
     if (operators[l]->is_parallel_op() &&
         operators[l]->op_type != OP_ALLREDUCE) {
@@ -3052,12 +3069,21 @@ Op *FFModel::create_operator_from_layer(
       dims[num_dims].degree = 1;
       dims[num_dims].parallel_idx = -1;
       dims[num_dims].is_replica_dim = true;
-      if (config.computationMode == COMP_MODE_INFERENCE &&
-          config.tensor_parallelism_degree > 1) {
+
+      if (config.tensor_parallelism_degree > 1 && num_inputs != 1) {
         dims[num_dims].size *= config.tensor_parallelism_degree;
         dims[num_dims].degree *= config.tensor_parallelism_degree;
         dims[num_dims].parallel_idx = 0;
       }
+
+      //TODO temporary fix for input to attention QK, fix it after fuse the attention block
+      else if(config.tensor_parallelism_degree > 1){
+         //n heads
+         dims[num_dims].size *= 12;
+         dims[num_dims].degree *= config.tensor_parallelism_degree;
+         dims[num_dims].parallel_idx = 0;
+      }
+
       // create_parallel_tensor adds an NoOp into operators
       ParallelTensor pt =
           create_parallel_tensor_legion_ordering(num_dims + 1,
@@ -3072,19 +3098,14 @@ Op *FFModel::create_operator_from_layer(
       assert(tensor->parallel_tensor == nullptr);
       tensor->parallel_tensor = pt;
       // start from data parllel tensor
-      if (config.only_data_parallel &&
-          config.numNodes * config.workersPerNode > 1) {
-        if (pt->dims[num_dims - 1].size == 1) {
-          Replicate *repl = new Replicate(
-              *this, pt, num_dims, config.numNodes * config.workersPerNode);
-          repl->outputs[0]->dims[num_dims].is_replica_dim = true;
-          operators.push_back(repl);
-        } else {
-          Repartition *part = new Repartition(
-              *this, pt, num_dims - 1, config.numNodes * config.workersPerNode);
-          operators.push_back(part);
-        }
-      }
+      //  if (config.only_data_parallel &&
+      //     config.computationMode == COMP_MODE_TRAINING) {
+      //   Repartition *part = new Repartition(
+      //       *this, pt, num_dims - 1, config.numNodes *
+      //       config.workersPerNode);
+      //   operators.push_back(part);
+      // }
+      num_inputs++;
       return operators[operators.size() - 1];
     }
     case OP_MULTIHEAD_ATTENTION: {
@@ -3299,6 +3320,18 @@ Op *FFModel::create_operator_from_layer(
   }
 }
 
+
+bool FFModel::is_transformer_block(int layer_idx) const {
+  auto const &l = layers[layer_idx];
+  if (l->op_type == OP_DROPOUT && layer_idx >= 4 &&
+      layers[layer_idx - 1]->op_type == OP_LINEAR &&
+      layers[layer_idx - 2]->op_type == OP_RESHAPE &&
+      layers[layer_idx - 3]->op_type == OP_TRANSPOSE &&
+      layers[layer_idx - 4]->op_type == OP_BATCHMATMUL) {
+    return true;
+  }
+  return false;
+}
 bool FFModel::is_mlp_block(int layer_idx) const {
   auto const &l = layers[layer_idx];
   // standard opt relu
@@ -3332,17 +3365,15 @@ void FFModel::create_operators_from_layers() {
              tensors_to_parallel_tensors.end());
       inputs.push_back(tensors_to_parallel_tensors[l->inputs[i]]);
     }
+
+    // Op *op = create_operator_from_layer(l, inputs);
     Op *op = nullptr;
-    // add a combine before arg_topk
-    if (config.computationMode == COMP_MODE_INFERENCE &&
-        config.tensor_parallelism_degree > 1 &&
-        (l->op_type == OP_ARG_TOPK || l->op_type == OP_SOFTMAX ||
-         l->op_type == OP_ARGMAX)) {
+    if (config.tensor_parallelism_degree > 1 && l->op_type == OP_LAYERNORM &&
+        layer_idx == layers.size() - 6) {
       std::vector<ParallelTensor> partitioned_inputs;
-      assert(inputs.size() == 1);
       Combine *comb = new Combine(*this,
                                   inputs[0],
-                                  0 /*inner most dim*/,
+                                  3 /*inner most dim*/,
                                   config.tensor_parallelism_degree);
       partitioned_inputs.push_back(comb->outputs[0]);
       operators.push_back(comb);
@@ -3350,22 +3381,20 @@ void FFModel::create_operators_from_layers() {
     } else {
       op = create_operator_from_layer(l, inputs);
     }
+
+
     // add replicate operators after op if needed
-    if (config.computationMode == COMP_MODE_INFERENCE &&
-        config.tensor_parallelism_degree > 1 && l->op_type == OP_EMBEDDING) {
-      assert(op->numOutputs == 1);
+    if (config.tensor_parallelism_degree > 1 && l->op_type == OP_EMBEDDING) {
+      // assert(op->numOutputs == 1);
       // Replicate *repl = new Replicate(*this,
       //                                 op->outputs[0],
       //                                 op->outputs[0]->num_dims - 1,
       //                                 config.tensor_parallelism_degree);
       // operators.push_back(repl);
       // op = repl;
-    } else if (config.computationMode == COMP_MODE_INFERENCE &&
-               config.tensor_parallelism_degree > 1 &&
-               (l->op_type == OP_INC_MULTIHEAD_SELF_ATTENTION ||
-                l->op_type == OP_TREE_INC_MULTIHEAD_SELF_ATTENTION ||
-                // mlp layer
-                is_mlp_block(layer_idx) ||
+
+    } else if (config.tensor_parallelism_degree > 1 &&
+               (is_transformer_block(layer_idx) || is_mlp_block(layer_idx) ||
                 // llama mlp layer
                 (l->op_type == OP_LINEAR && layer_idx >= 2 &&
                  layers[layer_idx - 1]->op_type == OP_GELU &&
@@ -3376,12 +3405,7 @@ void FFModel::create_operators_from_layers() {
                  layers[layer_idx - 2]->op_type == OP_EW_MUL &&
                  layers[layer_idx - 3]->op_type == OP_SIGMOID &&
                  layers[layer_idx - 4]->op_type == OP_LINEAR &&
-                 layers[layer_idx - 5]->op_type == OP_LINEAR) ||
-                // LLAMA with element-wise operator fusion
-                (l->op_type == OP_LINEAR && layer_idx >= 3 &&
-                 layers[layer_idx - 1]->op_type == OP_SIGMOID_SILU_MULTI &&
-                 layers[layer_idx - 2]->op_type == OP_LINEAR &&
-                 layers[layer_idx - 3]->op_type == OP_LINEAR))) {
+                 layers[layer_idx - 5]->op_type == OP_LINEAR))) {
       assert(op->numOutputs == 1);
       AllReduce *allreduce =
           new AllReduce(*this, op->outputs[0], op->outputs[0]->num_dims - 1);
@@ -3560,6 +3584,60 @@ void FFModel::compile(LossType loss_type,
       assert(op->inputs[i]->owner_op != nullptr);
       if (op->inputs[i]->owner_op->op_type == OP_INPUT) {
         op->trainableInputs[i] = false;
+      }
+    }
+  }
+
+  int degree =
+      config.data_parallelism_degree * config.tensor_parallelism_degree;
+
+  for (int op_idx = 0; op_idx < operators.size(); op_idx++) {
+    Op const *op = operators[op_idx];
+    // Skip weight operators
+    if (op->op_type == OP_WEIGHT) {
+      continue;
+    }
+    // Get machine views
+    std::vector<MachineView> machine_views;
+    for (int j = 0; j < config.data_parallelism_degree; j++) {
+      MachineView mv;
+      mv.device_type = MachineView::GPU;
+      mv.ndims = 1;
+      // mv.start_device_id = 0;
+      mv.stride[0] = 1;
+      int parallel_degree = 1;
+      for (int k = 0; k < op->outputs[0]->num_dims; k++) {
+        parallel_degree *= op->outputs[0]->dims[k].degree;
+      }
+      mv.dim[0] = parallel_degree;
+      mv.start_device_id = 0;
+      assert(mv == op->outputs[0]->machine_view);
+      machine_views.push_back(mv);
+    }
+    for (int i = 0; i < op->numOutputs; i++) {
+      ParallelTensor pt_base = op->outputs[i];
+
+      if (op->op_type == OP_REPLICATE) {
+        assert(op->numInputs == 1 && op->numOutputs == 1);
+      }
+      std::vector<ParallelTensor> list;
+      bool found_parallel_tensor = false;
+      if (!found_parallel_tensor) {
+        for (int j = 0; j < config.data_parallelism_degree; j++) {
+          // Copy the metadata from pt_base to pt
+          ParallelTensor pt = new ParallelTensorBase(*pt_base);
+          pt->region =
+              runtime->create_logical_region(ctx,
+                                             pt_base->region.get_index_space(),
+                                             pt_base->region.get_field_space());
+          pt->part = runtime->get_logical_partition(
+              ctx, pt->region, pt_base->part.get_index_partition());
+          pt->machine_view = machine_views[j];
+          Domain part_domain =
+              runtime->get_index_space_domain(ctx, pt_base->parallel_is);
+          assert(pt->machine_view.get_domain() == part_domain);
+          list.push_back(pt);
+        }
       }
     }
   }
@@ -4086,6 +4164,7 @@ struct DefaultConfig {
   constexpr static float learningRate = 0.01f;
   constexpr static float weightDecay = 0.0001f;
   static size_t const workSpaceSize = (size_t)128 * 1024 * 1024; // 128 MB
+
   static int const numNodes = 1;
   static int const workersPerNode = 0;
   static int const cpusPerNode = 0;
@@ -4098,6 +4177,7 @@ struct DefaultConfig {
       (size_t)8 * 1024 * 1024 * 1024; // 8 GB
   static bool const cpuOffload = false;
   static bool const onlyDataParallel = true;
+
   static bool const enableSampleParallel = true;
   static bool const enableParameterParallel = false;
   static bool const enableAttributeParallel = false;
@@ -4137,6 +4217,7 @@ FFConfig::FFConfig() {
   data_parallelism_degree = 1;
   tensor_parallelism_degree = 1;
   pipeline_parallelism_degree = 1;
+
   enable_sample_parallel = DefaultConfig::enableSampleParallel;
   enable_parameter_parallel = DefaultConfig::enableParameterParallel;
   enable_attribute_parallel = DefaultConfig::enableAttributeParallel;
@@ -4186,7 +4267,7 @@ FFConfig::FFConfig() {
   // Create an index space for tasks running on all GPUs
   all_gpu_task_is = runtime->create_index_space(lg_ctx, task_rect);
 
-  // field_space = runtime->create_field_space(lg_ctx);
+  field_space = runtime->create_field_space(lg_ctx);
 }
 
 void FFConfig::parse_args(char **argv, int argc) {
@@ -4277,6 +4358,7 @@ void FFConfig::parse_args(char **argv, int argc) {
       pipeline_parallelism_degree = std::stoi(argv[++i]);
       continue;
     }
+
     if ((!strcmp(argv[i], "--enable-parameter-parallel"))) {
       enable_parameter_parallel = true;
       continue;
@@ -6786,6 +6868,23 @@ void register_flexflow_internal_tasks(Runtime *runtime,
         registrar.global_registration = false;
       }
       runtime->register_task_variant<AdamOptimizer::nccl_update_task>(
+          registrar);
+    }
+  }
+  {
+    TaskVariantRegistrar registrar(ADAM_UNIFY_UPD_NCCL_TASK_ID,
+                                   "Adam unified NCCL Update");
+    registrar.add_constraint(ProcessorConstraint(Processor::TOC_PROC));
+    registrar.set_leaf();
+    if (pre_register) {
+      Runtime::preregister_task_variant<
+          AdamOptimizer::nccl_unified_update_task>(
+          registrar, "Adam unified NCCL Update Task");
+    } else {
+      if (enable_control_replication) {
+        registrar.global_registration = false;
+      }
+      runtime->register_task_variant<AdamOptimizer::nccl_unified_update_task>(
           registrar);
     }
   }

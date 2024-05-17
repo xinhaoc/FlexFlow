@@ -193,6 +193,7 @@ enum TaskIDs {
   // Optimizer with NCCL
   SGD_UPD_NCCL_TASK_ID,
   ADAM_UPD_NCCL_TASK_ID,
+  ADAM_UNIFY_UPD_NCCL_TASK_ID,
   // Initializer
   GLOROT_INIT_TASK_ID,
   ZERO_INIT_TASK_ID,
@@ -344,6 +345,7 @@ class SpecIncMultiHeadSelfAttention;
 class Sampling;
 class ArgMax;
 class Combine;
+class AllReduce;
 class Repartition;
 class Reduction;
 class Replicate;
@@ -1050,6 +1052,10 @@ public:
       std::vector<Op *> const &old_operators,
       std::unordered_map<ParallelTensor, std::vector<ParallelTensor>>
           *pt_mapping = nullptr);
+  void unified_update();
+  bool apply_fusion(std::vector<Op *> const &operators,
+                    std::vector<Op *> &new_operators);
+
   Op *get_final_operator() const;
   void compile(LossType loss_type,
                std::vector<MetricsType> const &metrics,
@@ -1102,6 +1108,8 @@ public:
   Legion::IndexSpace get_task_is(Legion::Domain const &domain) const;
   Legion::IndexSpace get_task_is(ParallelConfig const &pc) const;
   Legion::IndexSpace get_task_is(MachineView const &view) const;
+
+  bool is_transformer_block(int layer_idx) const;
   bool is_mlp_block(int layer_idx) const;
   void create_operators_from_layers();
   Op *create_operator_from_layer(Layer *layer,
@@ -1132,6 +1140,7 @@ public:
   int metrics_input;
   ParallelTensor parallel_label_tensor;
   Tensor label_tensor;
+  int num_inputs = 0;
 
   std::vector<Layer *> layers;
   std::vector<Op *> operators;
@@ -1240,6 +1249,8 @@ public:
                          Replicate *>,
       std::unordered_map<std::pair<ParallelTensorShape, ReductionParams>,
                          Reduction *>,
+      std::unordered_map<std::pair<ParallelTensorShape, AllReduceParams>,
+                         AllReduce *>,
       std::unordered_map<std::pair<ParallelTensorShape, CombineParams>,
                          Combine *>,
       std::unordered_map<std::pair<ParallelTensorShape, AllReduceParams>,

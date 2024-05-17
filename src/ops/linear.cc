@@ -248,6 +248,23 @@ Linear::Linear(FFModel &model,
     }
   }
 
+  kernel_shape.dims[0].size = this->in_channels;
+  bias_shape.dims[0].degree = _input->dims[_input->num_dims - 1].degree;
+  bias_shape.dims[0].parallel_idx =
+      _input->dims[_input->num_dims - 1].parallel_idx;
+  bias_shape.dims[1].size = bias_shape.dims[1].degree = 1;
+  bias_shape.dims[1].parallel_idx = -1;
+  bias_shape.dims[bias_shape.num_dims - 1].size =
+      bias_shape.dims[bias_shape.num_dims - 1].degree = 1;
+  for (int i = 0; i < input_shape.num_dims - 1; i++) {
+    if (_input->dims[i].degree > 1) {
+      bias_shape.dims[bias_shape.num_dims - 1].size *= _input->dims[i].degree;
+      bias_shape.dims[bias_shape.num_dims - 1].degree *= _input->dims[i].degree;
+      bias_shape.dims[bias_shape.num_dims - 1].parallel_idx =
+          _input->dims[i].parallel_idx;
+    }
+  }
+
   if (allocate_weights) {
     Initializer *kernel_initializer = new GlorotUniform(std::rand() /*seed*/);
     if (quantization_type != DT_NONE) {
@@ -282,7 +299,6 @@ Linear::Linear(FFModel &model,
   outputs[0] = model.create_parallel_tensor_legion_ordering(
       output_shape.num_dims, output_shape.dims, _data_type, this);
 
-  // assert(check_output_input_weight_parallel_dims(allocate_weights));
 }
 
 void Linear::init(FFModel const &ff) {

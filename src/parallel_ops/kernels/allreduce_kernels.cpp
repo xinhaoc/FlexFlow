@@ -49,6 +49,7 @@ void inference_kernel_wrapper(AllReduceMeta const *m,
 #endif
 }
 
+
 void forward_kernel_wrapper(AllReduceMeta const *m,
                             GenericTensorAccessorR const &input,
                             GenericTensorAccessorW const &output) {
@@ -63,6 +64,14 @@ void forward_kernel_wrapper(AllReduceMeta const *m,
                           output.ptr,
                           input.domain.get_volume(),
                           nccl_data_type,
+                          ncclSum,
+                          m->handle.ncclComm,
+                          stream));
+  // ncclDataType_t nccl_data_type = ff_to_nccl_datatype(input.data_type);
+  checkNCCL(ncclAllReduce(input.ptr,
+                          output.ptr,
+                          input.domain.get_volume(),
+                          ncclFloat,
                           ncclSum,
                           m->handle.ncclComm,
                           stream));

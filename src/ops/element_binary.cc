@@ -1130,6 +1130,27 @@ bool ElementBinary::measure_operator_cost(Simulator *sim,
   delete m;
   return true;
 }
+void ElementBinary::serialize(Legion::Serializer &sez) const {
+  sez.serialize(this->op_type);
+  sez.serialize(this->inplace_a);
+}
+
+using PCG::Node;
+/*static*/
+Node ElementBinary::deserialize(FFModel &ff,
+                                Legion::Deserializer &dez,
+                                ParallelTensor inputs[],
+                                int num_inputs) {
+  assert(num_inputs == 2);
+  OperatorType op_type;
+  bool inplace_a;
+  dez.deserialize(op_type);
+  dez.deserialize(inplace_a);
+  ElementBinaryParams params;
+  params.type = op_type;
+  params.inplace_a = inplace_a;
+  return ff.get_or_create_node<ElementBinary>({inputs[0], inputs[1]}, params);
+}
 
 void ElementBinary::serialize(Legion::Serializer &sez) const {
   sez.serialize(this->layer_guid.id);

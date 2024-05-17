@@ -148,7 +148,7 @@ int Embedding::output_size(ParallelDim output_dims[MAX_TENSOR_DIM]) {
   int const OUT_CHANNELS = Output::OUT_CHANNELS;
   if (aggr == AGGR_MODE_NONE) {
     int num_dims = input->num_dims + 1;
-    for (int i = 1; i < num_dims; i++) {
+    for (int i = 1; i < num_dims - 1; i++) {
       output_dims[i] = input->dims[i - 1];
     }
     assert(OUT_CHANNELS == 0);
@@ -160,7 +160,7 @@ int Embedding::output_size(ParallelDim output_dims[MAX_TENSOR_DIM]) {
     return num_dims;
   } else {
     int num_dims = input->num_dims;
-    for (int i = 1; i < num_dims; i++) {
+    for (int i = 1; i < num_dims - 1; i++) {
       output_dims[i] = input->dims[i];
     }
     assert(OUT_CHANNELS == 0);

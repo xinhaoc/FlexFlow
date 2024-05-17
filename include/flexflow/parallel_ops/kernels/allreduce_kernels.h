@@ -22,6 +22,7 @@ void inference_kernel_wrapper(AllReduceMeta const *m,
                               GenericTensorAccessorR const &input,
                               GenericTensorAccessorW const &output);
 
+
 void forward_kernel_wrapper(AllReduceMeta const *m,
                             GenericTensorAccessorR const &input,
                             GenericTensorAccessorW const &output);

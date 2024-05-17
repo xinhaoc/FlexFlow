@@ -11,6 +11,7 @@
 #include "flexflow/ops/beam_topk_params.h"
 #include "flexflow/ops/cast_params.h"
 #include "flexflow/ops/concat_params.h"
+#include "flexflow/parallel_ops/allreduce_params.h"
 #include "flexflow/ops/conv_2d_params.h"
 #include "flexflow/ops/dropout_params.h"
 #include "flexflow/ops/element_binary_params.h"

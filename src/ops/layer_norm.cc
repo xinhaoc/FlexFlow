@@ -246,6 +246,15 @@ LayerNorm::LayerNorm(FFModel &model,
     for (int i = axes.size(); i < beta_gamma_shape.num_dims - 1; i++) {
       beta_gamma_shape.dims[i].size = 1;
     }
+
+    assert(numInputs == 1);
+    dims[num_dims].degree = inputs[0]->dims[inputs[0]->num_dims - 1].degree;
+    dims[num_dims].size = dims[num_dims].degree;
+    dims[num_dims].parallel_idx =
+        inputs[0]->dims[inputs[0]->num_dims - 1].parallel_idx;
+    dims[num_dims].is_replica_dim = true;
+    num_dims += 1;
+
     int seed = std::rand();
     Initializer *gamma_initializer = new UniformInitializer(seed, 1.0f, 1.0f);
     weights[0] = model.create_parallel_weight_legion_ordering(
