@@ -30,6 +30,7 @@ DropoutMeta::DropoutMeta(FFHandler handler,
                          Domain const &output_domain)
     : OpMeta(handler) {
   profiling = dropout->profiling;
+  inference_debugging = dropout->inference_debugging;
   rate = dropout->rate;
   seed = dropout->seed;
   input_type[0] = dropout->data_type;

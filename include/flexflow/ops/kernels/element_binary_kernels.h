@@ -1,6 +1,7 @@
 #ifndef _FLEXFLOW_OPS_KERNELS_ELEMENT_BINARY_KERNELS_H
 #define _FLEXFLOW_OPS_KERNELS_ELEMENT_BINARY_KERNELS_H
 
+#include "flexflow/accessor.h"
 #include "flexflow/device.h"
 #include "flexflow/fftype.h"
 #include "flexflow/op_meta.h"
@@ -9,7 +10,7 @@ namespace FlexFlow {
 
 class ElementBinaryMeta : public OpMeta {
 public:
-  ElementBinaryMeta(FFHandler handle);
+  ElementBinaryMeta(FFHandler handle, Op const *op);
 #if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
   cudnnTensorDescriptor_t input1Tensor, input2Tensor, outputTensor;
   cudnnOpTensorDescriptor_t opDesc;
@@ -24,7 +25,6 @@ public:
   bool broadcast_input1, broadcast_input2;
   int batch_size;
   size_t replicate_size;
-  char op_name[MAX_OPNAME];
 };
 
 namespace Kernels {
@@ -36,9 +36,9 @@ void init_kernel(ElementBinaryMeta *m,
                  Legion::Domain const &output_domain);
 
 void forward_kernel_wrapper(ElementBinaryMeta const *m,
-                            float const *in1_ptr,
-                            float const *in2_ptr,
-                            float *out_ptr);
+                            GenericTensorAccessorR const &in1,
+                            GenericTensorAccessorR const &in2,
+                            GenericTensorAccessorW const &out);
 
 void backward_kernel_wrapper(ElementBinaryMeta const *m,
                              float const *out_grad_ptr,
@@ -49,10 +49,11 @@ void backward_kernel_wrapper(ElementBinaryMeta const *m,
 
 namespace Internal {
 
+template <typename DT>
 void forward_kernel(ElementBinaryMeta const *m,
-                    float const *in1_ptr,
-                    float const *in2_ptr,
-                    float *out_ptr,
+                    DT const *in1_ptr,
+                    DT const *in2_ptr,
+                    DT *out_ptr,
                     ffStream_t stream);
 void backward_kernel(ElementBinaryMeta const *m,
                      float const *out_grad_ptr,

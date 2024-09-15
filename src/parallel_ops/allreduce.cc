@@ -89,6 +89,17 @@ void AllReduce::create_input_partition(FFModel &ff) {
   return;
 }
 
+void AllReduce::create_input_partition_inference(
+    FFModel &ff,
+    std::vector<ParallelTensor> const &batch_inputs,
+    std::vector<ParallelTensor> const &batch_outputs) {
+  assert(ff.config.computationMode == COMP_MODE_INFERENCE);
+  assert(batch_outputs[0]->part != LogicalPartition::NO_PART);
+  assert(batch_inputs[0]->part != LogicalPartition::NO_PART);
+  // Do nothing
+  return;
+}
+
 
 OpMeta *AllReduce::init_task(Task const *task,
                              std::vector<PhysicalRegion> const &regions,
@@ -135,6 +146,85 @@ void AllReduce::init(FFModel const &ff) {
   fm.wait_all_results();
   set_opmeta_from_futuremap(ff, fm);
 }
+
+void AllReduce::init_inference(FFModel const &ff,
+                               std::vector<ParallelTensor> const &batch_inputs,
+                               std::vector<ParallelTensor> const &batch_outputs,
+                               MachineView const *mv) {
+  ArgumentMap argmap;
+  parallel_is = batch_outputs[0]->parallel_is;
+  Context ctx = ff.config.lg_ctx;
+  Runtime *runtime = ff.config.lg_hlr;
+  assert(numOutputs == 1);
+  assert(numInputs == 1);
+  size_t machine_view_hash =
+      mv ? mv->hash() : batch_outputs[0]->machine_view.hash();
+  set_argumentmap_for_init_inference(ff, argmap, batch_outputs[0]);
+  IndexLauncher launcher(ALLREDUCE_INIT_TASK_ID,
+                         parallel_is,
+                         TaskArgument(this, sizeof(AllReduce)),
+                         argmap,
+                         Predicate::TRUE_PRED,
+                         false /*must*/,
+                         0 /*mapper_id*/,
+                         machine_view_hash);
+  launcher.add_region_requirement(RegionRequirement(batch_inputs[0]->part,
+                                                    0 /*projection id*/,
+                                                    READ_ONLY,
+                                                    EXCLUSIVE,
+                                                    batch_inputs[0]->region));
+  launcher.add_field(0, FID_DATA);
+  launcher.add_region_requirement(RegionRequirement(batch_outputs[0]->part,
+                                                    0 /*projection id*/,
+                                                    WRITE_ONLY,
+                                                    EXCLUSIVE,
+                                                    batch_outputs[0]->region));
+  launcher.add_field(1, FID_DATA);
+  FutureMap fm = runtime->execute_index_space(ctx, launcher);
+  fm.wait_all_results();
+  set_opmeta_from_futuremap_inference(ff, fm, batch_outputs[0]);
+}
+
+FutureMap AllReduce::inference(FFModel const &ff,
+                               BatchConfigFuture const &bc,
+                               std::vector<ParallelTensor> const &batch_inputs,
+                               std::vector<ParallelTensor> const &batch_outputs,
+                               MachineView const *mv) {
+  ArgumentMap argmap;
+  Context ctx = ff.config.lg_ctx;
+  Runtime *runtime = ff.config.lg_hlr;
+  parallel_is = batch_outputs[0]->parallel_is;
+  assert(numOutputs == 1);
+  assert(numInputs == 1);
+  assert(batch_inputs[0]->data_type == batch_outputs[0]->data_type);
+  DataType data_type = batch_inputs[0]->data_type;
+  size_t machine_view_hash =
+      mv ? mv->hash() : batch_outputs[0]->machine_view.hash();
+  set_argumentmap_for_inference(ff, argmap, batch_outputs[0]);
+  IndexLauncher launcher(ALLREDUCE_INF_TASK_ID,
+                         batch_outputs[0]->parallel_is,
+                         TaskArgument(nullptr, 0),
+                         argmap,
+                         Predicate::TRUE_PRED,
+                         false /*must*/,
+                         0 /*mapper_id*/,
+                         machine_view_hash);
+  launcher.add_future(bc);
+  launcher.add_region_requirement(RegionRequirement(batch_inputs[0]->part,
+                                                    0 /*projection id*/,
+                                                    READ_ONLY,
+                                                    EXCLUSIVE,
+                                                    batch_inputs[0]->region));
+  launcher.add_field(0, FID_DATA);
+  launcher.add_region_requirement(RegionRequirement(batch_outputs[0]->part,
+                                                    0 /*projection id*/,
+                                                    WRITE_ONLY,
+                                                    EXCLUSIVE,
+                                                    batch_outputs[0]->region));
+  launcher.add_field(1, FID_DATA);
+  return runtime->execute_index_space(ctx, launcher);
+}
+
 
 void AllReduce::forward(FFModel const &ff) {
   ArgumentMap argmap;
@@ -232,6 +322,27 @@ bool AllReduce::append_parallel_op_info(
 }
 
 /*static*/
+void AllReduce::inference_task(Task const *task,
+                               std::vector<PhysicalRegion> const &regions,
+                               Context ctx,
+                               Runtime *runtime) {
+  assert(regions.size() == 2);
+  assert(task->regions.size() == 2);
+
+  AllReduceMeta const *m = *((AllReduceMeta **)task->local_args);
+  BatchConfig const *bc = BatchConfig::from_future(task->futures[0]);
+
+  GenericTensorAccessorR input = helperGetGenericTensorAccessorRO(
+      m->input_type[0], regions[0], task->regions[0], FID_DATA, ctx, runtime);
+  GenericTensorAccessorW output = helperGetGenericTensorAccessorWO(
+      m->output_type[0], regions[1], task->regions[1], FID_DATA, ctx, runtime);
+
+  assert(input.data_type == output.data_type);
+  inference_kernel_wrapper(m, bc, input, output);
+}
+
+/*static*/
+
 void AllReduce::forward_task(Task const *task,
                              std::vector<PhysicalRegion> const &regions,
                              Context ctx,
