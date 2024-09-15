@@ -28,7 +28,7 @@ using PCG::Node;
 
 using namespace FlexFlow::Kernels::Dropout;
 
-Tensor FFModel::dropout(const Tensor input,
+Tensor FFModel::dropout(Tensor const input,
                         float rate,
                         unsigned long long seed,
                         char const *name) {
@@ -86,7 +86,7 @@ bool operator==(DropoutParams const &lhs, DropoutParams const &rhs) {
 }
 
 Dropout::Dropout(FFModel &model,
-                 const ParallelTensor _input,
+                 ParallelTensor const _input,
                  float _rate,
                  unsigned long long _seed,
                  char const *name)
@@ -111,14 +111,14 @@ Dropout::Dropout(FFModel &model,
 
 Dropout::Dropout(FFModel &model,
                  Dropout const &other,
-                 const ParallelTensor input)
+                 ParallelTensor const input)
     : Dropout(model, input, other.rate, other.seed, other.name) {}
 
 Dropout::Dropout(FFModel &model,
                  DropoutParams const &params,
-                 const ParallelTensor input,
+                 ParallelTensor const input,
                  char const *name)
-    : Dropout(model, input, params.rate, params.seed, name) {}
+    : Dropout(model, input, params.rate, params.seed, params.name) {}
 
 void Dropout::init(FFModel const &ff) {
   assert(check_output_input_weight_same_parallel_is());
@@ -170,6 +170,8 @@ OpMeta *Dropout::init_task(Task const *task,
                        .first();
   assert(input_domain == output_domain);
   DropoutMeta *m = new DropoutMeta(handle, dropout, gpu_mem, output_domain);
+  std::strcpy(m->op_name, dropout->name);
+  m->layer_guid = dropout->layer_guid;
   return m;
 }
 
@@ -210,12 +212,12 @@ void Dropout::forward_task(Task const *task,
   assert(task->regions.size() == 2);
   // const Dropout* dropout = (const Dropout*) task->args;
   DropoutMeta *m = *((DropoutMeta **)task->local_args);
-  float const *input_ptr = helperGetTensorPointerRO<float>(
-      regions[0], task->regions[0], FID_DATA, ctx, runtime);
-  float *output_ptr = helperGetTensorPointerWO<float>(
-      regions[1], task->regions[1], FID_DATA, ctx, runtime);
-
-  forward_kernel_wrapper(m, input_ptr, output_ptr);
+  
+  GenericTensorAccessorR input = helperGetGenericTensorAccessorRO(
+      m->input_type[0], regions[0], task->regions[0], FID_DATA, ctx, runtime);
+  GenericTensorAccessorW output = helperGetGenericTensorAccessorWO(
+      m->output_type[0], regions[1], task->regions[1], FID_DATA, ctx, runtime);
+  forward_kernel_wrapper(m, input, output);
 }
 
 void Dropout::backward(FFModel const &ff) {
@@ -264,12 +266,20 @@ void Dropout::backward_task(Task const *task,
   float const *output_grad_ptr = helperGetTensorPointerRO<float>(
       regions[1], task->regions[1], FID_DATA, ctx, runtime);
 
-  backward_kernel_wrapper(m, output_grad_ptr, input_grad_ptr);
+  
+  GenericTensorAccessorW input_grad = helperGetGenericTensorAccessorRW(
+      m->output_type[0], regions[0], task->regions[0], FID_DATA, ctx, runtime);
+  GenericTensorAccessorR output_grad = helperGetGenericTensorAccessorRO(
+      m->input_type[0], regions[1], task->regions[1], FID_DATA, ctx, runtime);
+
+  backward_kernel_wrapper(m, output_grad, input_grad);
 }
 
 void Dropout::serialize(Legion::Serializer &sez) const {
   sez.serialize(this->rate);
   sez.serialize(this->seed);
+  sez.serialize(strlen(this->name));
+  sez.serialize(this->name, strlen(this->name));
 }
 
 Node Dropout::deserialize(FFModel &ff,
@@ -281,9 +291,14 @@ Node Dropout::deserialize(FFModel &ff,
   float rate;
   dez.deserialize(rate);
   dez.deserialize(seed);
+  size_t name_len;
+  char name[MAX_OPNAME] = {0};
+  dez.deserialize(name_len);
+  dez.deserialize(name, name_len);
   DropoutParams params;
   params.rate = rate;
   params.seed = seed;
+  strcpy(params.name, name);
   return ff.get_or_create_node<Dropout>(inputs[0], params);
 }
 
@@ -304,30 +319,37 @@ bool Dropout::measure_operator_cost(Simulator *sim,
   sim->free_all();
   float *input_ptr = (float *)sim->allocate(sub_input.get_volume(), DT_FLOAT);
   assert(input_ptr != NULL);
+
+  GenericTensorAccessorR input_acc(m->input_type[0], sub_input.get_domain(), input_ptr);
   cost_metrics.inputs_memory += cost_metrics.total_mem_diff_from(sim->offset);
 
   float *output_ptr = (float *)sim->allocate(sub_output.get_volume(), DT_FLOAT);
   assert(output_ptr != NULL);
+
+  GenericTensorAccessorW output_acc(m->output_type[0], sub_input.get_domain(), output_ptr);
   cost_metrics.outputs_memory += cost_metrics.total_mem_diff_from(sim->offset);
 
   assert(m->profiling == false);
 
   std::function<void()> forward, backward;
-  forward = [&] { forward_kernel_wrapper(m, input_ptr, output_ptr); };
+  forward = [&] { forward_kernel_wrapper(m, input_acc, output_acc); };
   if (sim->computationMode == COMP_MODE_TRAINING) {
     float *input_grad_ptr =
         (float *)sim->allocate(sub_input.get_volume(), DT_FLOAT);
     assert(input_grad_ptr != NULL);
+    GenericTensorAccessorW input_grad_acc(m->output_type[0], sub_input.get_domain(), input_grad_ptr);
     cost_metrics.inputs_memory += cost_metrics.total_mem_diff_from(sim->offset);
 
     float *output_grad_ptr =
         (float *)sim->allocate(sub_output.get_volume(), DT_FLOAT);
     assert(output_grad_ptr != NULL);
+    GenericTensorAccessorR output_grad_acc(m->output_type[0], sub_input.get_domain(), output_grad_ptr);
     cost_metrics.outputs_memory +=
         cost_metrics.total_mem_diff_from(sim->offset);
 
-    backward = [&] {
+    backward = [=] {
       backward_kernel_wrapper(m, output_grad_ptr, input_grad_ptr);
+
     };
   }
 

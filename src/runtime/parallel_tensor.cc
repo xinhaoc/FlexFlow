@@ -1,3 +1,4 @@
+#include "flexflow/ffconst_utils.h"
 #include "flexflow/model.h"
 #include "flexflow/ops/attention.h"
 #include "flexflow/ops/concat.h"
@@ -274,7 +275,7 @@ void ParallelTensorBase::attach_raw_ptr(FFConfig &config,
   Runtime *runtime = config.lg_hlr;
   AttachLauncher launcher(EXTERNAL_INSTANCE, region, region);
   std::vector<FieldID> fields(1, FID_DATA);
-  const Memory local_sysmem =
+  Memory const local_sysmem =
       Machine::MemoryQuery(Machine::get_machine())
           .has_affinity_to(runtime->get_executing_processor(ctx))
           .only_kind(Memory::SYSTEM_MEM)
@@ -660,33 +661,29 @@ bool ParallelTensorBase::set_tensor(FFModel const *ff,
   // TODO: check data type matches
   // TODO: Currently we use a task launch, change to index launch for NCCL
   // parameter
-  size_t volume = 1, num_replicas = 0;
+  size_t volume = 1, num_replicas = 1;
   if (sync_type == ParameterSyncType::NCCL) {
-    Domain domain = runtime->get_index_space_domain(ctx, parallel_is);
-    num_replicas = domain.get_volume();
+    // Domain domain = runtime->get_index_space_domain(ctx, parallel_is);
+    // num_replicas = domain.get_volume();
+    for (int i = 0; i < this->num_dims; i++) {
+      if (this->dims[i].is_replica_dim) {
+        num_replicas *= this->dims[i].size;
+      }
+    }
   } else if (sync_type == ParameterSyncType::PS) {
     num_replicas = 1;
   } else {
-    num_replicas = 1;
+     for (int i = 0; i < this->num_dims; i++) {
+      if (this->dims[i].is_replica_dim) {
+        num_replicas *= this->dims[i].size;
+      }
+    }
+    // num_replicas = 1;
   }
   for (size_t i = 0; i < dim_sizes.size(); i++) {
     volume = volume * dim_sizes[i];
   }
-  // Debug prints
-  {
-    std::string tensor_name;
-    if (owner_op == nullptr) {
-      tensor_name = "No OwnerOp";
-    } else {
-      tensor_name = std::string(owner_op->name);
-    }
-    std::ostringstream oss;
-    for (int i = 0; i < dim_sizes.size(); i++)
-      oss << dim_sizes[i] << ", ";
-    printf("%s num_replicas(%zu) volume(%zu) dims(%s)\n", tensor_name.c_str(),
-        num_replicas, volume, oss.str().c_str());
-  }
-  RegionRequirement req(region, READ_WRITE, EXCLUSIVE, region);
+  RegionRequirement req(region, WRITE_ONLY, EXCLUSIVE, region);
   req.add_field(FID_DATA);
   InlineLauncher launcher(req);
   PhysicalRegion pr = runtime->map_region(ctx, launcher);
@@ -694,7 +691,7 @@ bool ParallelTensorBase::set_tensor(FFModel const *ff,
   switch (num_dims) {
 #define DIMFUNC(DIM)                                                           \
   case DIM: {                                                                  \
-    TensorAccessorW<T, DIM> acc(pr, req, FID_DATA, ctx, runtime, true);        \
+    TensorAccessorW<T, DIM> acc(pr, req, FID_DATA, ctx, runtime, false);       \
     assert(acc.rect.volume() == volume * num_replicas);                        \
     T *ptr = acc.ptr;                                                          \
     for (size_t i = 0; i < num_replicas; i++) {                                \
@@ -766,6 +763,65 @@ bool ParallelTensorBase::get_tensor(FFModel const *ff,
   return true;
 }
 
+template <typename T>
+bool ParallelTensorBase::tensor_equal(FFConfig &config,
+                                      ParallelTensorBase &tensor) {
+  Context ctx = config.lg_ctx;
+  Runtime *runtime = config.lg_hlr;
+  TaskLauncher launcher(TENSOR_EQUAL_TASK_ID,
+                        TaskArgument(&num_dims, sizeof(num_dims)));
+  launcher.add_region_requirement(
+      RegionRequirement(region, READ_ONLY, EXCLUSIVE, region));
+  launcher.add_field(0, FID_DATA);
+  launcher.add_region_requirement(
+      RegionRequirement(tensor.region, READ_ONLY, EXCLUSIVE, tensor.region));
+  launcher.add_field(1, FID_DATA);
+  Future result = runtime->execute_task(ctx, launcher);
+  bool equals = result.get_result<bool>();
+  return equals;
+}
+
+bool ParallelTensorBase::tensor_equal_task(
+    Task const *task,
+    std::vector<PhysicalRegion> const &regions,
+    Context ctx,
+    Runtime *runtime) {
+  assert(regions.size() == 2);
+  int dim = *(int const *)task->args;
+  switch (dim) {
+#define DIMFUNC(DIM)                                                           \
+  case DIM:                                                                    \
+    return tensor_equal_task_with_dim<DIM>(task, regions, ctx, runtime);
+    LEGION_FOREACH_N(DIMFUNC)
+#undef DIMFUNC
+    default:
+      assert(false);
+  }
+  assert(false);
+}
+
+template <int NDIM>
+bool ParallelTensorBase::tensor_equal_task_with_dim(
+    Task const *task,
+    std::vector<PhysicalRegion> const &regions,
+    Context ctx,
+    Runtime *runtime) {
+  TensorAccessorR<float, NDIM> acc1(
+      regions[0], task->regions[0], FID_DATA, ctx, runtime);
+  TensorAccessorR<float, NDIM> acc2(
+      regions[1], task->regions[1], FID_DATA, ctx, runtime);
+  float const *data1 = acc1.ptr;
+  float const *data2 = acc2.ptr;
+  bool equal = true;
+  for (int i = 0; i < acc1.rect.volume(); i++) {
+    if (data1[i] != data2[i]) {
+      equal = false;
+      break;
+    }
+  }
+  return equal;
+}
+
 template float *ParallelTensorBase::get_raw_ptr<float>(FFConfig &config);
 template int32_t *ParallelTensorBase::get_raw_ptr<int32_t>(FFConfig &config);
 
@@ -794,6 +850,20 @@ template bool TensorBase::get_tensor<int64_t>(FFModel const *ff,
                                               int64_t *data,
                                               bool get_gradients);
 
+template bool ParallelTensorBase::set_tensor<half>(FFModel const *ff,
+                                                   std::vector<int> const &dims,
+                                                   half const *data);
+template bool ParallelTensorBase::get_tensor<half>(FFModel const *ff,
+                                                   half *data,
+                                                   bool get_gradients);
+
+template bool ParallelTensorBase::set_tensor<char>(FFModel const *ff,
+                                                   std::vector<int> const &dims,
+                                                   char const *data);
+template bool ParallelTensorBase::get_tensor<char>(FFModel const *ff,
+                                                   char *data,
+                                                   bool get_gradients);
+
 template bool ParallelTensorBase::set_tensor<float>(
     FFModel const *ff, std::vector<int> const &dims, float const *data);
 template bool ParallelTensorBase::get_tensor<float>(FFModel const *ff,
@@ -814,6 +884,10 @@ template bool ParallelTensorBase::set_tensor<int64_t>(
 template bool ParallelTensorBase::get_tensor<int64_t>(FFModel const *ff,
                                                       int64_t *data,
                                                       bool get_gradients);
+
+template bool
+    ParallelTensorBase::tensor_equal<float>(FFConfig &config,
+                                            ParallelTensorBase &tensor);
 
 template bool TensorBase::get_output_parallel_tensor<float>(FFModel const *ff,
                                                             float *data,
