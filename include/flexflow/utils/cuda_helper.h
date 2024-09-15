@@ -92,7 +92,12 @@ __global__ void copy_kernel_discrete(DT *dst,
                                      const DT *src,
                                      Legion::coord_t size,
                                      size_t *index);
-__global__ void copy_kernel_with_replicate(DT *dst, const DT *src, Legion::coord_t origin_size, Legion::coord_t size);
+
+__global__ void copy_kernel_with_replicate(DT *dst,
+                                           const DT *src,
+                                           Legion::coord_t origin_size,
+                                           Legion::coord_t size);
+
 
 
 template <typename T>
