@@ -61,10 +61,7 @@ __host__ OpMeta *
   int output_c = acc_output.rect.hi[2] - acc_output.rect.lo[2] + 1;
   int output_n = acc_output.rect.hi[3] - acc_output.rect.lo[3] + 1;
 
-  Memory gpu_mem = Machine::MemoryQuery(Machine::get_machine())
-                       .only_kind(Memory::GPU_FB_MEM)
-                       .best_affinity_to(task->target_proc)
-                       .first();
+  Memory gpu_mem = get_proc_mem(Machine::get_machine(), task->target_proc);
   BatchNormMeta *m = new BatchNormMeta(
       handle, bm, gpu_mem, output_n, output_c, output_h, output_w);
   return m;
@@ -133,9 +130,9 @@ __host__ void
 
   hipEvent_t t_start, t_end;
   if (m->profiling) {
-    hipEventCreate(&t_start);
-    hipEventCreate(&t_end);
-    hipEventRecord(t_start, stream);
+    checkCUDA(hipEventCreate(&t_start));
+    checkCUDA(hipEventCreate(&t_end));
+    checkCUDA(hipEventRecord(t_start, stream));
   }
   forward_kernel(m,
                  acc_input.ptr,
@@ -143,12 +140,12 @@ __host__ void
                  acc_scale.ptr,
                  acc_bias.ptr /*, stream*/);
   if (m->profiling) {
-    hipEventRecord(t_end, stream);
+    checkCUDA(hipEventRecord(t_end, stream));
     checkCUDA(hipEventSynchronize(t_end));
     float elapsed = 0;
     checkCUDA(hipEventElapsedTime(&elapsed, t_start, t_end));
-    hipEventDestroy(t_start);
-    hipEventDestroy(t_end);
+    checkCUDA(hipEventDestroy(t_start));
+    checkCUDA(hipEventDestroy(t_end));
     printf("BatchNorm forward time (BF) = %.2fms\n", elapsed);
   }
 }
@@ -256,9 +253,9 @@ __host__ void
 
   hipEvent_t t_start, t_end;
   if (m->profiling) {
-    hipEventCreate(&t_start);
-    hipEventCreate(&t_end);
-    hipEventRecord(t_start, stream);
+    checkCUDA(hipEventCreate(&t_start));
+    checkCUDA(hipEventCreate(&t_end));
+    checkCUDA(hipEventRecord(t_start, stream));
   }
   backward_kernel(m,
                   acc_input.ptr,
@@ -270,12 +267,12 @@ __host__ void
                   acc_bias_grad.ptr,
                   acc_output.rect.volume() /*, stream*/);
   if (m->profiling) {
-    hipEventRecord(t_end, stream);
+    checkCUDA(hipEventRecord(t_end, stream));
     checkCUDA(hipEventSynchronize(t_end));
     float elapsed = 0;
     checkCUDA(hipEventElapsedTime(&elapsed, t_start, t_end));
-    hipEventDestroy(t_start);
-    hipEventDestroy(t_end);
+    checkCUDA(hipEventDestroy(t_start));
+    checkCUDA(hipEventDestroy(t_end));
     printf("BatchNorm backward time = %.2fms\n", elapsed);
   }
 }
@@ -287,12 +284,13 @@ BatchNormMeta::BatchNormMeta(FFHandler handler,
                              int output_c,
                              int output_h,
                              int output_w)
-    : OpMeta(handler) {
+    : OpMeta(handler, bn) {
   checkCUDNN(miopenCreateTensorDescriptor(&inputTensor));
   checkCUDNN(miopenCreateTensorDescriptor(&biasTensor));
   checkCUDNN(miopenCreateTensorDescriptor(&outputTensor));
   relu = bn->relu;
   profiling = bn->profiling;
+  inference_debugging = bn->inference_debugging;
   mode = miopenBNSpatial;
   // #if HIPDNN_VERSION >= 7000
   //   mode = HIPDNN_BATCHNORM_SPATIAL_PERSISTENT;

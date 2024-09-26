@@ -13,6 +13,9 @@ BATCHSIZE=$((GPUS * 64))
 FSIZE=13800
 ZSIZE=12192
 
+GPU_AVAILABLE=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
+if [ $(( GPUS )) -gt $(( GPU_AVAILABLE )) ]; then echo "The test requires $GPUS GPUs, but only $GPU_AVAILABLE are available. Try reducing the number of nodes, or the number of gpus/node." ; exit; fi
+
 remove_mnist() {
 	rm -f train-images-idx3-ubyte.gz train-labels-idx1-ubyte.gz train-images-idx3-ubyte train-labels-idx1-ubyte
 }
@@ -20,8 +23,8 @@ remove_mnist() {
 download_mnist() {
 	if [[ ! -f train-images-idx3-ubyte || ! -f train-labels-idx1-ubyte ]]; then
 		remove_mnist
-		wget http://yann.lecun.com/exdb/mnist/train-images-idx3-ubyte.gz
-		wget http://yann.lecun.com/exdb/mnist/train-labels-idx1-ubyte.gz
+		wget https://mnist-backup.s3.us-east-2.amazonaws.com/train-images-idx3-ubyte.gz
+		wget https://mnist-backup.s3.us-east-2.amazonaws.com/train-labels-idx1-ubyte.gz
 		gzip -d train-images-idx3-ubyte.gz
 		gzip -d train-labels-idx1-ubyte.gz
 	fi

@@ -6,8 +6,10 @@
 namespace FlexFlow {
 
 struct SoftmaxParams {
+  LayerID layer_guid;
   int dim;
   bool last_layer;
+  char name[MAX_OPNAME];
   bool is_valid(ParallelTensorShape const &) const;
 };
 bool operator==(SoftmaxParams const &, SoftmaxParams const &);

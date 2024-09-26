@@ -13,13 +13,15 @@
  * limitations under the License.
  */
 
+#include "flexflow/ops/batch_matmul.h"
 #include "flexflow/ops/kernels/batch_matmul_kernels.h"
 #include "flexflow/utils/hip_helper.h"
 #include <hip/hip_runtime.h>
 
 namespace FlexFlow {
 
-BatchMatmulMeta::BatchMatmulMeta(FFHandler handler) : OpMeta(handler) {}
+BatchMatmulMeta::BatchMatmulMeta(FFHandler handler, BatchMatmul const *bmm)
+    : OpMeta(handler, bmm) {}
 
 namespace Kernels {
 namespace BatchMatmul {
@@ -41,9 +43,9 @@ void forward_kernel_wrapper(BatchMatmulMeta const *meta,
 
   hipEvent_t t_start, t_end;
   if (meta->profiling) {
-    hipEventCreate(&t_start);
-    hipEventCreate(&t_end);
-    hipEventRecord(t_start, stream);
+    checkCUDA(hipEventCreate(&t_start));
+    checkCUDA(hipEventCreate(&t_end));
+    checkCUDA(hipEventRecord(t_start, stream));
   }
   Internal::forward_kernel(meta,
                            o_ptr,
@@ -59,12 +61,12 @@ void forward_kernel_wrapper(BatchMatmulMeta const *meta,
                            b_seq_length_dim,
                            seq_length);
   if (meta->profiling) {
-    hipEventRecord(t_end, stream);
+    checkCUDA(hipEventRecord(t_end, stream));
     checkCUDA(hipEventSynchronize(t_end));
     float elapsed = 0;
     checkCUDA(hipEventElapsedTime(&elapsed, t_start, t_end));
-    hipEventDestroy(t_start);
-    hipEventDestroy(t_end);
+    checkCUDA(hipEventDestroy(t_start));
+    checkCUDA(hipEventDestroy(t_end));
     printf("BatchMatmul forward time = %.2lfms\n", elapsed);
   }
 }
@@ -86,9 +88,9 @@ void backward_kernel_wrapper(BatchMatmulMeta const *meta,
 
   hipEvent_t t_start, t_end;
   if (meta->profiling) {
-    hipEventCreate(&t_start);
-    hipEventCreate(&t_end);
-    hipEventRecord(t_start, stream);
+    checkCUDA(hipEventCreate(&t_start));
+    checkCUDA(hipEventCreate(&t_end));
+    checkCUDA(hipEventRecord(t_start, stream));
   }
   Internal::backward_kernel(meta,
                             o_ptr,
@@ -104,12 +106,12 @@ void backward_kernel_wrapper(BatchMatmulMeta const *meta,
                             batch,
                             stream);
   if (meta->profiling) {
-    hipEventRecord(t_end, stream);
+    checkCUDA(hipEventRecord(t_end, stream));
     checkCUDA(hipEventSynchronize(t_end));
     float elapsed = 0;
     checkCUDA(hipEventElapsedTime(&elapsed, t_start, t_end));
-    hipEventDestroy(t_start);
-    hipEventDestroy(t_end);
+    checkCUDA(hipEventDestroy(t_start));
+    checkCUDA(hipEventDestroy(t_end));
     printf("BatchMatmul backward time = %.2lfms\n", elapsed);
   }
 }

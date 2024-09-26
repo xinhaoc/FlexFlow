@@ -194,7 +194,7 @@ MultiHeadAttentionMeta::MultiHeadAttentionMeta(FFHandler handler,
                                                Memory gpu_mem,
                                                int num_samples,
                                                int num_heads)
-    : OpMeta(handler) {
+    : OpMeta(handler, attn) {
   cudaStream_t stream;
   checkCUDA(get_legion_stream(&stream));
   checkCUDNN(cudnnSetStream(handler.dnn, stream));
@@ -206,7 +206,7 @@ MultiHeadAttentionMeta::MultiHeadAttentionMeta(FFHandler handler,
   checkCUDNN(cudnnCreateSeqDataDescriptor(&oDesc));
   // Currently do not support adding bias to key/value projection
   assert(!attn->add_bias_kv);
-  cudnnAttnQueryMap_t attnMode = CUDNN_ATTN_QUERYMAP_ALL_TO_ONE;
+  unsigned attnMode = CUDNN_ATTN_QUERYMAP_ALL_TO_ONE;
   // Assume no beam search for now
   int maxBeamSize = 1;
   // printf("batchSize(%d) qSize(%d) kSize(%d) vSize(%d) qProjSize(%d)

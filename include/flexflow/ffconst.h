@@ -33,6 +33,8 @@ enum DataType {
   DT_HALF = 43,
   DT_FLOAT = 44,
   DT_DOUBLE = 45,
+  DT_INT4 = 46,
+  DT_INT8 = 47,
   DT_NONE = 49,
 };
 
@@ -42,6 +44,12 @@ enum LossType {
   LOSS_MEAN_SQUARED_ERROR_AVG_REDUCE = 52,
   LOSS_MEAN_SQUARED_ERROR_SUM_REDUCE = 53,
   LOSS_IDENTITY = 54,
+};
+
+enum OptimizerType {
+  OPTIMIZER_TYPE_NONE = 60,
+  OPTIMIZER_TYPE_SGD = 61,
+  OPTIMIZER_TYPE_ADAM = 62,
 };
 
 enum CompMode {
@@ -62,6 +70,17 @@ enum MetricsType {
   METRICS_MEAN_SQUARED_ERROR = 1008,
   METRICS_ROOT_MEAN_SQUARED_ERROR = 1016,
   METRICS_MEAN_ABSOLUTE_ERROR = 1032,
+};
+
+enum InferenceMode {
+  INC_DECODING_MODE = 2001,
+  BEAM_SEARCH_MODE = 2002,
+  TREE_VERIFY_MODE = 2003,
+};
+
+enum RequestType {
+  REQ_INFERENCE = 4001,
+  REQ_FINETUNING = 4002,
 };
 
 // This is consistent with TASO's OpType
@@ -129,6 +148,7 @@ enum OperatorType {
   OP_SHAPE, // https://github.com/onnx/onnx/blob/master/docs/Operators.md#Shape
   OP_SIZE,  // https://github.com/onnx/onnx/blob/master/docs/Operators.md#Size
   OP_TOPK,  // https://github.com/onnx/onnx/blob/master/docs/Operators.md#TopK
+  OP_ARG_TOPK,
   OP_WHERE, // https://github.com/onnx/onnx/blob/master/docs/Operators.md#Where
   OP_CEIL,  // https://github.com/onnx/onnx/blob/master/docs/Operators.md#Ceil
   OP_CAST,  // https://github.com/onnx/onnx/blob/master/docs/Operators.md#Cast
@@ -150,7 +170,21 @@ enum OperatorType {
   OP_POW,   // https://pytorch.org/docs/stable/generated/torch.pow.html
   OP_MEAN,  // https://pytorch.org/docs/stable/generated/torch.mean.html
   OP_LAYERNORM,
+  OP_RESIDUAL_LAYERNORM,
+  OP_ADD_BIAS_RESIDUAL_LAYERNORM,
+  OP_SIGMOID_SILU_MULTI,
+  OP_EXPERTS,
   OP_GATHER, // https://pytorch.org/docs/stable/generated/torch.gather.html
+  OP_RMS_NORM,
+  OP_RESIDUAL_RMS_NORM,
+  OP_BEAM_TOPK,
+  OP_ARGMAX,
+  OP_INC_MULTIHEAD_SELF_ATTENTION,
+  OP_SPEC_INC_MULTIHEAD_SELF_ATTENTION,
+  OP_TREE_INC_MULTIHEAD_SELF_ATTENTION,
+  OP_SAMPLING,
+  // PEFT Ops
+  OP_LORA,
   // Parallel Ops
   OP_REPARTITION,
   OP_COMBINE,
@@ -158,41 +192,52 @@ enum OperatorType {
   OP_REDUCTION,
   OP_PIPELINE,
   OP_ALLREDUCE,
+  OP_PARALLEL_IDENTITY,
   OP_FUSED_PARALLEL,
   OP_INVALID,
 };
 
+enum ModelType {
+  UNKNOWN = 3001,
+  LLAMA = 3002,
+  OPT = 3003,
+  FALCON = 3004,
+  STARCODER = 3005,
+  MPT = 3006
+};
+
 enum PMParameter {
-  PM_OP_TYPE,            // AnyOp
-  PM_NUM_INPUTS,         // AnyOp
-  PM_NUM_OUTPUTS,        // AnyOp
-  PM_GROUP,              // Conv2D
-  PM_KERNEL_H,           // Conv2D, Pool2D
-  PM_KERNEL_W,           // Conv2D, Pool2D
-  PM_STRIDE_H,           // Conv2D, Pool2D
-  PM_STRIDE_W,           // Conv2D, Pool2D
-  PM_PADDING_H,          // Conv2D, Pool2D
-  PM_PADDING_W,          // Conv2D, Pool2D
-  PM_ACTI,               // Conv2D, Pool2D
-  PM_NUMDIM,             // Concat, Transpose
-  PM_AXIS,               // Concat, Split
-  PM_PERM,               // Transpose
-  PM_OUTSHUFFLE,         // Transpose
-  PM_MERGE_GCONV_COUNT,  // MergeGConv
-  PM_AXES,               // Squeeze, Unsqueeze, Reduce*
-  PM_KEEP_DIMS,          // Reduce*
-  PM_EPSILON,            // BatchNorm
-  PM_REPARTITION_DIM,    // Repartition
-  PM_REPARTITION_DEGREE, // Repartition
-  PM_REPLICATE_DIM,      // Replicate
-  PM_REPLICATE_DEGREE,   // Replicate
-  PM_COMBINE_DIM,        // Combine
-  PM_COMBINE_DEGREE,     // Combine
-  PM_REDUCTION_DIM,      // Reduction
-  PM_REDUCTION_DEGREE,   // Reduction
-  PM_ALLREDUCE_DIM,      // AllReduce
-  PM_SOFTMAX_DIM,        // Softmax
-  PM_NUM_HEADS,          // MultiHeadAttention
+  PM_OP_TYPE,               // AnyOp
+  PM_NUM_INPUTS,            // AnyOp
+  PM_NUM_OUTPUTS,           // AnyOp
+  PM_GROUP,                 // Conv2D
+  PM_KERNEL_H,              // Conv2D, Pool2D
+  PM_KERNEL_W,              // Conv2D, Pool2D
+  PM_STRIDE_H,              // Conv2D, Pool2D
+  PM_STRIDE_W,              // Conv2D, Pool2D
+  PM_PADDING_H,             // Conv2D, Pool2D
+  PM_PADDING_W,             // Conv2D, Pool2D
+  PM_ACTI,                  // Conv2D, Pool2D
+  PM_NUMDIM,                // Concat, Transpose
+  PM_AXIS,                  // Concat, Split
+  PM_PERM,                  // Transpose
+  PM_OUTSHUFFLE,            // Transpose
+  PM_MERGE_GCONV_COUNT,     // MergeGConv
+  PM_AXES,                  // Squeeze, Unsqueeze, Reduce*
+  PM_KEEP_DIMS,             // Reduce*
+  PM_EPSILON,               // BatchNorm
+  PM_REPARTITION_DIM,       // Repartition
+  PM_REPARTITION_DEGREE,    // Repartition
+  PM_REPLICATE_DIM,         // Replicate
+  PM_REPLICATE_DEGREE,      // Replicate
+  PM_COMBINE_DIM,           // Combine
+  PM_COMBINE_DEGREE,        // Combine
+  PM_REDUCTION_DIM,         // Reduction
+  PM_REDUCTION_DEGREE,      // Reduction
+  PM_ALLREDUCE_DIM,         // AllReduce
+  PM_PARALLEL_IDENTITY_DIM, // AllReduce
+  PM_SOFTMAX_DIM,           // Softmax
+  PM_NUM_HEADS,             // MultiHeadAttention
   PM_INVALID,
   PM_PARALLEL_DIM,
   PM_PARALLEL_DEGREE,
@@ -238,5 +283,7 @@ enum {
   TENSOR_GUID_LAST_VALID = 3999999,
   PARALLEL_TENSOR_GUID_FIRST_VALID = 4000000,
   NODE_GUID_FIRST_VALID = 5000000,
+  PEFT_MODEL_ID_FIRST_VALID = 6000000,
+  PEFT_MODEL_ID_LAST_VALID = 6999999
 };
 #endif // _FLEXFLOW_CONST_H_

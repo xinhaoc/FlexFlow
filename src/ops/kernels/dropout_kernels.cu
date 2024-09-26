@@ -27,12 +27,13 @@ DropoutMeta::DropoutMeta(FFHandler handler,
                          Dropout const *dropout,
                          Memory gpu_mem,
                          Domain const &output_domain)
-    : OpMeta(handler) {
+    : OpMeta(handler, dropout) {
   profiling = dropout->profiling;
   rate = dropout->rate;
   seed = dropout->seed;
   input_type[0] = dropout->data_type;
   output_type[0] = dropout->data_type;
+  inference_debugging = dropout->inference_debugging;
   checkCUDNN(cudnnCreateTensorDescriptor(&inputTensor));
   checkCUDNN(cudnnCreateTensorDescriptor(&outputTensor));
   checkCUDNN(cudnnCreateDropoutDescriptor(&dropoutDesc));

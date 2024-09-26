@@ -147,7 +147,7 @@ Concat::Concat(FFModel &model,
                ConcatParams const &params,
                std::vector<ParallelTensor> const &inputs,
                char const *name)
-    : Concat(model, inputs.size(), inputs.data(), params.axis, name) {}
+    : Concat(model, inputs.size(), inputs.data(), params.axis, params.name) {}
 
 void Concat::init(FFModel const &ff) {
   assert(check_output_input_weight_same_parallel_is());
@@ -197,11 +197,13 @@ OpMeta *Concat::init_task(Task const *task,
                           Runtime *runtime) {
   Concat *cc = (Concat *)task->args;
   FFHandler handler = *((FFHandler const *)task->local_args);
-  ConcatMeta *m = new ConcatMeta(handler);
+  ConcatMeta *m = new ConcatMeta(handler, cc);
   // Note that our internal axis index ordering is opposite to other frameworks
   init_meta(m, cc->legion_axis);
   m->profiling = cc->profiling;
+  m->inference_debugging = cc->inference_debugging;
   std::strcpy(m->op_name, cc->name);
+  m->layer_guid = cc->layer_guid;
   return m;
 }
 
@@ -363,7 +365,7 @@ bool Concat::measure_operator_cost(Simulator *sim,
     }
   }
 
-  ConcatMeta *m = sim->concat_meta;
+  ConcatMeta *m = new ConcatMeta(sim->handler, this);
   init_meta(m, this->legion_axis);
 
   sim->free_all();
@@ -426,7 +428,7 @@ bool Concat::measure_operator_cost(Simulator *sim,
       cost_metrics.backward_time = Simulator::MAXIMUM_TASK_RUN_TIME;
       return true;
     }
-    backward = [&] {
+    backward = [=] {
       backward_kernel_wrapper(
           m, output_grad_acc, input_grad_accs, numInputs, legion_axis);
     };

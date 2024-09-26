@@ -10,13 +10,15 @@
 
 namespace FlexFlow {
 
+class ReplicateMeta;
+
 class Replicate : public ParallelOp {
 public:
   using Params = ReplicateParams;
   using Input = ParallelTensor;
 
   Replicate(FFModel &model,
-            const ParallelTensor input,
+            ParallelTensor const input,
             int replicate_legion_dim,
             int replicate_degree,
             char const *name = NULL);
@@ -25,20 +27,44 @@ public:
             Input const input,
             char const *name = nullptr);
   void create_input_partition(FFModel &model) override;
+  void create_input_partition_inference(
+      FFModel &model,
+      std::vector<ParallelTensor> const &batch_inputs,
+      std::vector<ParallelTensor> const &batch_outputs) override;
   void init(FFModel const &) override;
+  void init_inference(FFModel const &,
+                      std::vector<ParallelTensor> const &,
+                      std::vector<ParallelTensor> const &,
+                      MachineView const *mv = nullptr) override;
   void forward(FFModel const &) override;
+  Legion::FutureMap inference(FFModel const &,
+                              BatchConfigFuture const &bc,
+                              std::vector<ParallelTensor> const &,
+                              std::vector<ParallelTensor> const &,
+                              MachineView const *mv = nullptr) override;
   void backward(FFModel const &) override;
   bool get_int_parameter(PMParameter, int *) const override;
   bool append_parallel_op_info(
       std::vector<ParallelOpInfo> &parallel_ops) const override;
-  static void init_task(Legion::Task const *task,
-                        std::vector<Legion::PhysicalRegion> const &regions,
-                        Legion::Context ctx,
-                        Legion::Runtime *runtime);
+  // <<<<<<< HEAD
+  //   static void init_task(Legion::Task const *task,
+  //                         std::vector<Legion::PhysicalRegion> const &regions,
+  //                         Legion::Context ctx,
+  //                         Legion::Runtime *runtime);
+  // =======
+  static OpMeta *init_task(Legion::Task const *task,
+                           std::vector<Legion::PhysicalRegion> const &regions,
+                           Legion::Context ctx,
+                           Legion::Runtime *runtime);
   static void forward_task(Legion::Task const *task,
                            std::vector<Legion::PhysicalRegion> const &regions,
                            Legion::Context ctx,
                            Legion::Runtime *runtime);
+  Legion::FutureMap peft_bwd(FFModel const &,
+                             BatchConfigFuture const &bc,
+                             std::vector<ParallelTensor> const &,
+                             std::vector<ParallelTensor> const &,
+                             MachineView const *mv = nullptr) override;
   static void backward_task(Legion::Task const *task,
                             std::vector<Legion::PhysicalRegion> const &regions,
                             Legion::Context ctx,
@@ -58,6 +84,15 @@ public:
       Legion::Context ctx,
       Legion::Runtime *runtime);
 
+  static void peft_bwd_task(Legion::Task const *task,
+                            std::vector<Legion::PhysicalRegion> const &regions,
+                            Legion::Context ctx,
+                            Legion::Runtime *runtime);
+  static void forward_kernel_wrapper(ReplicateMeta const *m,
+                                     GenericTensorAccessorR const &input,
+                                     GenericTensorAccessorW const &output,
+                                     size_t num_elements,
+                                     size_t num_replicas);
   bool measure_operator_cost(Simulator *sim,
                              MachineView const &pc,
                              CostMetrics &cost_metrics) const override;

@@ -8,11 +8,12 @@
 
 namespace FlexFlow {
 
+class Concat;
+
 class ConcatMeta : public OpMeta {
 public:
-  ConcatMeta(FFHandler handle) : OpMeta(handle){};
+  ConcatMeta(FFHandler handle, Concat const *cc);
   int legion_axis;
-  char op_name[MAX_OPNAME];
 };
 
 namespace Kernels {

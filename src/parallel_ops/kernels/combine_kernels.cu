@@ -13,12 +13,14 @@
  * limitations under the License.
  */
 
+#include "flexflow/parallel_ops/combine.h"
 #include "flexflow/parallel_ops/kernels/combine_kernels.h"
 #include "flexflow/utils/cuda_helper.h"
 
 namespace FlexFlow {
 
-CombineMeta::CombineMeta(FFHandler handler) : OpMeta(handler) {}
+CombineMeta::CombineMeta(FFHandler handler, Combine const *comb)
+    : OpMeta(handler, comb) {}
 
 namespace Kernels {
 namespace Combine {
@@ -44,6 +46,9 @@ void backward_kernel(T const *output_grad_ptr,
       input_grad_ptr, output_grad_ptr, num_elements);
 }
 
+template void forward_kernel<half>(half const *input_ptr,
+                                   half *output_ptr,
+                                   size_t num_elements);
 template void forward_kernel<float>(float const *input_ptr,
                                     float *output_ptr,
                                     size_t num_elements);
@@ -56,6 +61,9 @@ template void forward_kernel<int32_t>(int32_t const *input_ptr,
 template void forward_kernel<int64_t>(int64_t const *input_ptr,
                                       int64_t *output_ptr,
                                       size_t num_elements);
+template void backward_kernel<half>(half const *output_grad_ptr,
+                                    half *input_grad_ptr,
+                                    size_t num_elements);
 template void backward_kernel<float>(float const *output_grad_ptr,
                                      float *input_grad_ptr,
                                      size_t num_elements);

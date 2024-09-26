@@ -33,20 +33,21 @@ namespace FlexFlow {
 
 #define MOD(a, b) ((a) % (b)) < 0 ? ((a) % (b)) + (b) : ((a) % (b))
 
-class Conv2DMeta;
-class LinearMeta;
-class Pool2DMeta;
-class ElementUnaryMeta;
-class ElementBinaryMeta;
-// class EmbeddingMeta;
-// class SoftmaxMeta;
-class BatchMatmulMeta;
-// class BatchNormMeta;
-class ConcatMeta;
-// class DropoutMeta;
-class TransposeMeta;
-class Op;
-class FFModel;
+// class Conv2DMeta;
+// class LinearMeta;
+// class Pool2DMeta;
+// class ElementUnaryMeta;
+// class ElementBinaryMeta;
+// class LayerNormMeta;
+//  class EmbeddingMeta;
+//  class SoftmaxMeta;
+// class BatchMatmulMeta;
+//  class BatchNormMeta;
+// class ConcatMeta;
+//  class DropoutMeta;
+// class TransposeMeta;
+// class Op;
+// class FFModel;
 
 /**
  * @brief Costs of an operator.
@@ -684,8 +685,6 @@ public:
   std::map<size_t, SimTask *> hash_to_forward_task, hash_to_backward_task;
 };
 
-size_t data_type_size(DataType);
-
 using ProfilingRecordKey = std::tuple<OperatorParameters, MachineView>;
 
 class Simulator {
@@ -752,18 +751,19 @@ public:
       strict_hash_to_operator_cost;
 
 public:
-  Conv2DMeta *conv2d_meta;
-  LinearMeta *linear_meta;
-  Pool2DMeta *pool2d_meta;
-  ElementUnaryMeta *ele_unary_meta;
-  ElementBinaryMeta *ele_binary_meta;
-  // EmbeddingMeta *embedding_meta;
-  // SoftmaxMeta *softmax_meta;
-  BatchMatmulMeta *batch_matmul_meta;
-  // BatchNormMeta *batch_norm_meta;
-  ConcatMeta *concat_meta;
-  // DropoutMeta *dropout_meta;
-  TransposeMeta *transpose_meta;
+  // Conv2DMeta *conv2d_meta;
+  // LinearMeta *linear_meta;
+  // Pool2DMeta *pool2d_meta;
+  // ElementUnaryMeta *ele_unary_meta;
+  // LayerNormMeta *layernorm_meta;
+  //  ElementBinaryMeta *ele_binary_meta;
+  //  EmbeddingMeta *embedding_meta;
+  //  SoftmaxMeta *softmax_meta;
+  // BatchMatmulMeta *batch_matmul_meta;
+  //  BatchNormMeta *batch_norm_meta;
+  // ConcatMeta *concat_meta;
+  //  DropoutMeta *dropout_meta;
+  // TransposeMeta *transpose_meta;
   int segment_size;
   int max_num_segments; // simulation could be slow if the number of segments
                         // are too large

@@ -13,13 +13,14 @@
  * limitations under the License.
  */
 
+#include "flexflow/ffconst_utils.h"
 #include "flexflow/parallel_ops/kernels/allreduce_kernels.h"
 #include "flexflow/utils/cuda_helper.h"
 
 namespace FlexFlow {
 
 AllReduceMeta::AllReduceMeta(FFHandler handle, AllReduce const *reduct)
-    : OpMeta(handle) {}
+    : OpMeta(handle, reduct) {}
 
 namespace Kernels {
 namespace AllReduce {
@@ -32,11 +33,11 @@ void forward_kernel_wrapper(AllReduceMeta const *m,
   assert(input.data_type == output.data_type);
   assert(input.domain == output.domain);
 #ifdef FF_USE_NCCL
-  // ncclDataType_t nccl_data_type = ff_to_nccl_datatype(input.data_type);
+  ncclDataType_t nccl_data_type = ff_to_nccl_datatype(input.data_type);
   checkNCCL(ncclAllReduce(input.ptr,
                           output.ptr,
                           input.domain.get_volume(),
-                          ncclFloat,
+                          nccl_data_type,
                           ncclSum,
                           m->handle.ncclComm,
                           stream));
@@ -56,16 +57,61 @@ void backward_kernel_wrapper(AllReduceMeta const *m,
   // ncclDataType_t nccl_data_type = ff_to_nccl_datatype(input.data_type);
   // std::cout <<"input volume: " << input.domain.get_volume() << "\n";
   // print_tensor<float>((float*)input.ptr, 32, "input ptr");
+  ncclDataType_t nccl_data_type = ff_to_nccl_datatype(input_grad.data_type);
   checkNCCL(ncclAllReduce(output_grad.ptr,
                           input_grad.ptr,
                           output_grad.domain.get_volume(),
-                          ncclFloat,
+                          nccl_data_type,
                           ncclSum,
                           m->handle.ncclComm,
                           stream));
 #else
   assert(false && "Must enable FF_USE_NCCL to use AllReduce operators");
 #endif
+}
+
+void inference_kernel_wrapper(AllReduceMeta const *m,
+                              BatchConfig const *bc,
+                              GenericTensorAccessorR const &input,
+                              GenericTensorAccessorW const &output) {
+  cudaStream_t stream;
+  checkCUDA(get_legion_stream(&stream));
+  assert(input.data_type == output.data_type);
+  assert(input.domain == output.domain);
+  size_t hidden_dim_size = input.domain.hi()[0] - input.domain.lo()[0] + 1;
+  size_t num_elements = bc->num_active_tokens() * hidden_dim_size;
+#ifdef FF_USE_NCCL
+  ncclDataType_t nccl_data_type = ff_to_nccl_datatype(input.data_type);
+  checkNCCL(ncclAllReduce(input.ptr,
+                          output.ptr,
+                          num_elements,
+                          nccl_data_type,
+
+                          ncclSum,
+                          m->handle.ncclComm,
+                          stream));
+#else
+  assert(false && "Must enable FF_USE_NCCL to use AllReduce operators");
+#endif
+}
+
+void peft_bwd_kernel_wrapper(AllReduceMeta const *m,
+                             BatchConfig const *bc,
+                             GenericTensorAccessorW const &input_grad,
+                             GenericTensorAccessorR const &output_grad) {
+  cudaStream_t stream;
+  checkCUDA(get_legion_stream(&stream));
+  assert(input_grad.data_type == output_grad.data_type);
+  assert(input_grad.domain == output_grad.domain);
+  size_t hidden_dim_size =
+      input_grad.domain.hi()[0] - input_grad.domain.lo()[0] + 1;
+  size_t num_elements = bc->num_active_tokens();
+  size_t data_size = data_type_size(output_grad.data_type);
+  checkCUDA(cudaMemcpyAsync(input_grad.ptr,
+                            output_grad.ptr,
+                            hidden_dim_size * num_elements * data_size,
+                            cudaMemcpyDeviceToDevice,
+                            stream));
 }
 
 } // namespace AllReduce

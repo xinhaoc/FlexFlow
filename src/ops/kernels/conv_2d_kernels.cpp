@@ -14,12 +14,14 @@
  */
 
 #include "flexflow/ops/kernels/conv_2d_kernels.h"
+#include "flexflow/ops/conv_2d.h"
 #include "flexflow/utils/hip_helper.h"
 #include <hip/hip_runtime.h>
 
 namespace FlexFlow {
 
-Conv2DMeta::Conv2DMeta(FFHandler handler) : OpMeta(handler) {
+Conv2DMeta::Conv2DMeta(FFHandler handler, Conv2D const *conv)
+    : OpMeta(handler, conv) {
   checkCUDNN(miopenCreateTensorDescriptor(&inputTensor));
   checkCUDNN(miopenCreateTensorDescriptor(&biasTensor));
   checkCUDNN(miopenCreateTensorDescriptor(&outputTensor));
@@ -174,15 +176,15 @@ void forward_kernel_wrapper(Conv2DMeta const *m,
 
   hipEvent_t t_start, t_end;
   if (m->profiling) {
-    hipEventCreate(&t_start);
-    hipEventCreate(&t_end);
-    hipEventRecord(t_start, stream);
+    checkCUDA(hipEventCreate(&t_start));
+    checkCUDA(hipEventCreate(&t_end));
+    checkCUDA(hipEventRecord(t_start, stream));
   }
 
   Internal::forward_kernel(
       m, input_ptr, output_ptr, filter_ptr, bias_ptr, stream);
   if (m->profiling) {
-    hipEventRecord(t_end, stream);
+    checkCUDA(hipEventRecord(t_end, stream));
     checkCUDA(hipEventSynchronize(t_end));
     print_tensor<float>(input_ptr, 16, "[Conv2D:forward:input]");
     print_tensor<float>(filter_ptr, 16, "[Conv2D:forward:kernel]");
@@ -190,8 +192,8 @@ void forward_kernel_wrapper(Conv2DMeta const *m,
     print_tensor<float>(output_ptr, 16, "[Conv2D:forward:output]");
     float elapsed = 0;
     checkCUDA(hipEventElapsedTime(&elapsed, t_start, t_end));
-    hipEventDestroy(t_start);
-    hipEventDestroy(t_end);
+    checkCUDA(hipEventDestroy(t_start));
+    checkCUDA(hipEventDestroy(t_end));
     printf("%s [Conv2D] forward time (CF) = %.2fms\n", m->op_name, elapsed);
   }
 }
@@ -209,9 +211,9 @@ void backward_kernel_wrapper(Conv2DMeta const *m,
 
   hipEvent_t t_start, t_end;
   if (m->profiling) {
-    hipEventCreate(&t_start);
-    hipEventCreate(&t_end);
-    hipEventRecord(t_start, stream);
+    checkCUDA(hipEventCreate(&t_start));
+    checkCUDA(hipEventCreate(&t_end));
+    checkCUDA(hipEventRecord(t_start, stream));
   }
 
   Internal::backward_kernel(m,
@@ -224,12 +226,12 @@ void backward_kernel_wrapper(Conv2DMeta const *m,
                             bias_grad_ptr,
                             stream);
   if (m->profiling) {
-    hipEventRecord(t_end, stream);
+    checkCUDA(hipEventRecord(t_end, stream));
     checkCUDA(hipEventSynchronize(t_end));
     float elapsed = 0;
     checkCUDA(hipEventElapsedTime(&elapsed, t_start, t_end));
-    hipEventDestroy(t_start);
-    hipEventDestroy(t_end);
+    checkCUDA(hipEventDestroy(t_start));
+    checkCUDA(hipEventDestroy(t_end));
     printf("%s [Conv2D] backward time = %.2fms\n", m->op_name, elapsed);
     // print_tensor<4, float>(acc_output_grad.ptr, acc_output_grad.rect,
     // "[Conv2D:backward:output_grad]"); print_tensor<4,
@@ -326,7 +328,7 @@ void backward_kernel(Conv2DMeta const *m,
                        output_ptr,
                        n * c * h * w);
   }
-  // Compute filter gradiant
+  // Compute filter gradient
   // NOTE: we use alpha for kernel_grad to accumulate gradients
   checkCUDNN(miopenConvolutionBackwardWeights(m->handle.dnn,
                                               &alpha,
@@ -341,7 +343,7 @@ void backward_kernel(Conv2DMeta const *m,
                                               kernel_grad_ptr,
                                               m->handle.workSpace,
                                               m->handle.workSpaceSize));
-  // Compute bias gradiant
+  // Compute bias gradient
   // NOTE: we use alpha for bias_grad to accumulate gradients
   if (bias_grad_ptr != NULL) {
     checkCUDNN(miopenConvolutionBackwardBias(m->handle.dnn,
@@ -352,7 +354,7 @@ void backward_kernel(Conv2DMeta const *m,
                                              m->biasTensor,
                                              bias_grad_ptr));
   }
-  // Compute data gradiant
+  // Compute data gradient
   // NOTE: we use alpha for input_grad to accumulate gradients
   if (input_grad_ptr != NULL) {
     checkCUDNN(miopenConvolutionBackwardData(m->handle.dnn,

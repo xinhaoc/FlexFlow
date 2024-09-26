@@ -1,6 +1,7 @@
 #ifndef _FLEXFLOW_AGGREGATE_SPEC_H_
 #define _FLEXFLOW_AGGREGATE_SPEC_H_
 
+#include "flexflow/inference.h"
 #include "flexflow/model.h"
 #include "flexflow/ops/aggregate_spec_params.h"
 
@@ -10,9 +11,11 @@ namespace FlexFlow {
 #define AGGREGATE_SPEC_MAX_BATCH_SIZE 32
 #define AGGREGATE_SPEC_MAX_N 12
 
+class AggregateSpec;
+
 class AggregateSpecMeta : public OpMeta {
 public:
-  AggregateSpecMeta(FFHandler handle, int n);
+  AggregateSpecMeta(FFHandler handle, AggregateSpec const *agg);
   ~AggregateSpecMeta(void);
   float **dev_region_ptrs;
 };
@@ -27,7 +30,16 @@ public:
                 float _lambda_bal,
                 char const *name);
   void init(FFModel const &) override;
+  void init_inference(FFModel const &,
+                      std::vector<ParallelTensor> const &,
+                      std::vector<ParallelTensor> const &,
+                      MachineView const *mv = nullptr) override;
   void forward(FFModel const &) override;
+  Legion::FutureMap inference(FFModel const &,
+                              BatchConfigFuture const &,
+                              std::vector<ParallelTensor> const &,
+                              std::vector<ParallelTensor> const &,
+                              MachineView const *mv = nullptr) override;
   void backward(FFModel const &) override;
   void print_layer(FFModel const &model) override {
     assert(0);

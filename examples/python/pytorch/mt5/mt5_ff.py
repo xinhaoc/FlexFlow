@@ -5,9 +5,10 @@ import sys
 import numpy as np
 import torch
 from flexflow.core import *
+import flexflow.core as ff
 from flexflow.torch.model import PyTorchModel
 #from transformers import MT5ForConditionalGeneration, T5Tokenizer
-from transformers import BertForMaskedLM, BertTokenizer
+from transformers import BertForMaskedLM, BertTokenizer, BertConfig
 sys.path.append("./examples/python/pytorch/mt5")
 from mt5_torch import DataPreparer, get_dataloaders, set_seed
 
@@ -85,6 +86,12 @@ def top_level_task():
     ffconfig = FFConfig()
     ffmodel = FFModel(ffconfig)
     #model = MT5ForConditionalGeneration.from_pretrained("google/mt5-small")
+    # config = BertConfig.from_pretrained('bert-base-uncased')
+
+    # # Modify the configuration to set a different number of layers
+    # config.num_hidden_layers = 1  # Set the number of layers you want
+    # model = BertForMaskedLM.from_pretrained("bert-base-uncased", config=config)
+    # model.num_layers = 1
     model = BertForMaskedLM.from_pretrained("bert-base-uncased")
     #model = BertModel.from_pretrained("bert-base-uncased")
     # Load train data as numpy arrays
@@ -195,4 +202,6 @@ if __name__ == "__main__":
     #if not os.path.exists(os.path.join(NUMPY_DIR, "train_y_ids.npy")) or \
     #        not os.path.exists(os.path.join(NUMPY_DIR, "train_lm_labels.npy")):
     #    preprocess_train()
+    configs = ff.get_configs()
+    ff.init_flexflow_runtime(configs)
     top_level_task()

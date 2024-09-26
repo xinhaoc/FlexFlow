@@ -16,6 +16,8 @@
 #include "flexflow/flexflow_c.h"
 #include "flexflow/dataloader.h"
 #include "flexflow/mapper.h"
+#include "flexflow/request_manager.h"
+#include "flexflow/utils/file_loader.h"
 
 using namespace Legion;
 using namespace FlexFlow;
@@ -33,7 +35,9 @@ public:
     t_.impl = const_cast<void *>(static_cast<void const *>(t));                \
     return t_;                                                                 \
   }                                                                            \
-  static T unwrap(T_ t_) { return static_cast<T>(t_.impl); }                   \
+  static T unwrap(T_ t_) {                                                     \
+    return static_cast<T>(t_.impl);                                            \
+  }                                                                            \
   static const T unwrap_const(const T_ t_) {                                   \
     return static_cast<const T>(t_.impl);                                      \
   }
@@ -55,6 +59,23 @@ public:
   FF_NEW_OPAQUE_WRAPPER(flexflow_net_config_t, NetConfig *);
   FF_NEW_OPAQUE_WRAPPER(flexflow_dlrm_config_t, DLRMConfig *);
   FF_NEW_OPAQUE_WRAPPER(flexflow_single_dataloader_t, SingleDataLoader *);
+  // inference
+  FF_NEW_OPAQUE_WRAPPER(flexflow_batch_config_t, BatchConfig *);
+  FF_NEW_OPAQUE_WRAPPER(flexflow_tree_verify_batch_config_t,
+                        TreeVerifyBatchConfig *);
+  FF_NEW_OPAQUE_WRAPPER(flexflow_beam_search_batch_config_t,
+                        BeamSearchBatchConfig *);
+  FF_NEW_OPAQUE_WRAPPER(flexflow_inference_manager_t, InferenceManager *);
+  FF_NEW_OPAQUE_WRAPPER(flexflow_request_manager_t, RequestManager *);
+  FF_NEW_OPAQUE_WRAPPER(flexflow_file_data_loader_t, FileDataLoader *);
+  FF_NEW_OPAQUE_WRAPPER(flexflow_generation_result_t, GenerationResult *);
+  // FF_NEW_OPAQUE_WRAPPER(flexflow_lora_optimizer_config_t, LoraOptimizerConfig
+  // *); FF_NEW_OPAQUE_WRAPPER(flexflow_lora_sgd_optimizer_config_t,
+  //                       LoraSGDOptimizerConfig *);
+  // FF_NEW_OPAQUE_WRAPPER(flexflow_lora_adam_optimizer_config_t,
+  //                       LoraAdamOptimizerConfig *);
+  FF_NEW_OPAQUE_WRAPPER(flexflow_lora_linear_config_t, LoraLinearConfig *);
+  FF_NEW_OPAQUE_WRAPPER(flexflow_peft_model_id_t, PEFTModelID *);
 };
 
 Logger ffc_log("flexflow_c");
@@ -121,18 +142,56 @@ bool flexflow_config_get_enable_control_replication(flexflow_config_t handle_) {
   return handle->enable_control_replication;
 }
 
+int flexflow_config_get_data_parallelism_degree(flexflow_config_t handle_) {
+  FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->data_parallelism_degree;
+}
+
+int flexflow_config_get_tensor_parallelism_degree(flexflow_config_t handle_) {
+  FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->tensor_parallelism_degree;
+}
+
+int flexflow_config_get_pipeline_parallelism_degree(flexflow_config_t handle_) {
+  FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->pipeline_parallelism_degree;
+}
+
+void flexflow_config_set_data_parallelism_degree(flexflow_config_t handle_,
+                                                 int value) {
+  FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->data_parallelism_degree = value;
+}
+
+void flexflow_config_set_tensor_parallelism_degree(flexflow_config_t handle_,
+                                                   int value) {
+  FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->tensor_parallelism_degree = value;
+}
+
+void flexflow_config_set_pipeline_parallelism_degree(flexflow_config_t handle_,
+                                                     int value) {
+  FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->pipeline_parallelism_degree = value;
+}
+
 int flexflow_config_get_python_data_loader_type(flexflow_config_t handle_) {
   FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
   return handle->python_data_loader_type;
+}
+bool flexflow_config_get_offload(flexflow_config_t handle_) {
+  FFConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->cpu_offload;
 }
 
 // -----------------------------------------------------------------------
 // FFModel
 // -----------------------------------------------------------------------
 
-flexflow_model_t flexflow_model_create(flexflow_config_t config_) {
+flexflow_model_t flexflow_model_create(flexflow_config_t config_,
+                                       bool cpu_offload) {
   FFConfig *config = FFCObjectWrapper::unwrap(config_);
-  FFModel *model = new FFModel(*config);
+  FFModel *model = new FFModel(*config, cpu_offload);
   DEBUG_PRINT("[FFModel] new %p", model);
   return FFCObjectWrapper::wrap(model);
 }
@@ -208,56 +267,56 @@ void flexflow_model_zero_gradients(flexflow_model_t handle_) {
 }
 
 flexflow_tensor_t flexflow_model_add_exp(flexflow_model_t handle_,
-                                         const flexflow_tensor_t x_,
+                                         flexflow_tensor_t const x_,
                                          char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  const Tensor x = FFCObjectWrapper::unwrap_const(x_);
+  Tensor const x = FFCObjectWrapper::unwrap_const(x_);
   Tensor tensor = handle->exp(x, name);
   DEBUG_PRINT("[Exp] new Tensor %p, x %p, name %s", tensor, x, name);
   return FFCObjectWrapper::wrap(tensor);
 }
 
 flexflow_tensor_t flexflow_model_add_sin(flexflow_model_t handle_,
-                                         const flexflow_tensor_t x_,
+                                         flexflow_tensor_t const x_,
                                          char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  const Tensor x = FFCObjectWrapper::unwrap_const(x_);
+  Tensor const x = FFCObjectWrapper::unwrap_const(x_);
   Tensor tensor = handle->sin(x, name);
   DEBUG_PRINT("[Sin] new Tensor %p, x %p, name %s", tensor, x, name);
   return FFCObjectWrapper::wrap(tensor);
 }
 
 flexflow_tensor_t flexflow_model_add_cos(flexflow_model_t handle_,
-                                         const flexflow_tensor_t x_,
+                                         flexflow_tensor_t const x_,
                                          char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  const Tensor x = FFCObjectWrapper::unwrap_const(x_);
+  Tensor const x = FFCObjectWrapper::unwrap_const(x_);
   Tensor tensor = handle->cos(x, name);
   DEBUG_PRINT("[Cos] new Tensor %p, x %p, name %s", tensor, x, name);
   return FFCObjectWrapper::wrap(tensor);
 }
 
 flexflow_tensor_t flexflow_model_add_add(flexflow_model_t handle_,
-                                         const flexflow_tensor_t x_,
-                                         const flexflow_tensor_t y_,
+                                         flexflow_tensor_t const x_,
+                                         flexflow_tensor_t const y_,
                                          bool inplace_a,
                                          char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  const Tensor x = FFCObjectWrapper::unwrap_const(x_);
-  const Tensor y = FFCObjectWrapper::unwrap_const(y_);
+  Tensor const x = FFCObjectWrapper::unwrap_const(x_);
+  Tensor const y = FFCObjectWrapper::unwrap_const(y_);
   Tensor tensor = handle->add(x, y, inplace_a, name);
   DEBUG_PRINT("[Add] new Tensor %p, x %p, y %p, name %s", tensor, x, y, name);
   return FFCObjectWrapper::wrap(tensor);
 }
 
 flexflow_tensor_t flexflow_model_add_subtract(flexflow_model_t handle_,
-                                              const flexflow_tensor_t x_,
-                                              const flexflow_tensor_t y_,
+                                              flexflow_tensor_t const x_,
+                                              flexflow_tensor_t const y_,
                                               bool inplace_a,
                                               char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  const Tensor x = FFCObjectWrapper::unwrap_const(x_);
-  const Tensor y = FFCObjectWrapper::unwrap_const(y_);
+  Tensor const x = FFCObjectWrapper::unwrap_const(x_);
+  Tensor const y = FFCObjectWrapper::unwrap_const(y_);
   Tensor tensor = handle->subtract(x, y, inplace_a, name);
   DEBUG_PRINT(
       "[Subtract] new Tensor %p, x %p, y %p, name %s", tensor, x, y, name);
@@ -265,13 +324,13 @@ flexflow_tensor_t flexflow_model_add_subtract(flexflow_model_t handle_,
 }
 
 flexflow_tensor_t flexflow_model_add_multiply(flexflow_model_t handle_,
-                                              const flexflow_tensor_t x_,
-                                              const flexflow_tensor_t y_,
+                                              flexflow_tensor_t const x_,
+                                              flexflow_tensor_t const y_,
                                               bool inplace_a,
                                               char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  const Tensor x = FFCObjectWrapper::unwrap_const(x_);
-  const Tensor y = FFCObjectWrapper::unwrap_const(y_);
+  Tensor const x = FFCObjectWrapper::unwrap_const(x_);
+  Tensor const y = FFCObjectWrapper::unwrap_const(y_);
   Tensor tensor = handle->multiply(x, y, inplace_a, name);
   DEBUG_PRINT(
       "[Multiply] new Tensor %p, x %p, y %p, name %s", tensor, x, y, name);
@@ -279,13 +338,13 @@ flexflow_tensor_t flexflow_model_add_multiply(flexflow_model_t handle_,
 }
 
 flexflow_tensor_t flexflow_model_add_divide(flexflow_model_t handle_,
-                                            const flexflow_tensor_t x_,
-                                            const flexflow_tensor_t y_,
+                                            flexflow_tensor_t const x_,
+                                            flexflow_tensor_t const y_,
                                             bool inplace_a,
                                             char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  const Tensor x = FFCObjectWrapper::unwrap_const(x_);
-  const Tensor y = FFCObjectWrapper::unwrap_const(y_);
+  Tensor const x = FFCObjectWrapper::unwrap_const(x_);
+  Tensor const y = FFCObjectWrapper::unwrap_const(y_);
   Tensor tensor = handle->divide(x, y, inplace_a, name);
   DEBUG_PRINT(
       "[Divide] new Tensor %p, x %p, y %p, name %s", tensor, x, y, name);
@@ -293,33 +352,33 @@ flexflow_tensor_t flexflow_model_add_divide(flexflow_model_t handle_,
 }
 
 flexflow_tensor_t flexflow_model_add_max(flexflow_model_t handle_,
-                                         const flexflow_tensor_t x_,
-                                         const flexflow_tensor_t y_,
+                                         flexflow_tensor_t const x_,
+                                         flexflow_tensor_t const y_,
                                          bool inplace_a,
                                          char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  const Tensor x = FFCObjectWrapper::unwrap_const(x_);
-  const Tensor y = FFCObjectWrapper::unwrap_const(y_);
+  Tensor const x = FFCObjectWrapper::unwrap_const(x_);
+  Tensor const y = FFCObjectWrapper::unwrap_const(y_);
   Tensor tensor = handle->max(x, y, inplace_a, name);
   DEBUG_PRINT("[Max] new Tensor %p, x %p, y %p, name %s", tensor, x, y, name);
   return FFCObjectWrapper::wrap(tensor);
 }
 
 flexflow_tensor_t flexflow_model_add_min(flexflow_model_t handle_,
-                                         const flexflow_tensor_t x_,
-                                         const flexflow_tensor_t y_,
+                                         flexflow_tensor_t const x_,
+                                         flexflow_tensor_t const y_,
                                          bool inplace_a,
                                          char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  const Tensor x = FFCObjectWrapper::unwrap_const(x_);
-  const Tensor y = FFCObjectWrapper::unwrap_const(y_);
+  Tensor const x = FFCObjectWrapper::unwrap_const(x_);
+  Tensor const y = FFCObjectWrapper::unwrap_const(y_);
   Tensor tensor = handle->min(x, y, inplace_a, name);
   DEBUG_PRINT("[Min] new Tensor %p, x %p, y %p, name %s", tensor, x, y, name);
   return FFCObjectWrapper::wrap(tensor);
 }
 
 flexflow_tensor_t flexflow_model_add_reduce_sum(flexflow_model_t handle_,
-                                                const flexflow_tensor_t input_,
+                                                flexflow_tensor_t const input_,
                                                 int *axes,
                                                 int n,
                                                 bool keepdims,
@@ -340,21 +399,21 @@ flexflow_tensor_t flexflow_model_add_reduce_sum(flexflow_model_t handle_,
 }
 
 flexflow_tensor_t flexflow_model_add_rsqrt(flexflow_model_t handle_,
-                                           const flexflow_tensor_t input_,
+                                           flexflow_tensor_t const input_,
                                            char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  const Tensor input = FFCObjectWrapper::unwrap(input_);
+  Tensor const input = FFCObjectWrapper::unwrap(input_);
   Tensor tensor = handle->rsqrt(input, name);
   DEBUG_PRINT("[Rsqrt] new Tensor %p, input %p, name %s", tensor, input, name);
   return FFCObjectWrapper::wrap(tensor);
 }
 
 flexflow_tensor_t flexflow_model_add_pow(flexflow_model_t handle_,
-                                         const flexflow_tensor_t input_,
+                                         flexflow_tensor_t const input_,
                                          float const exponent,
                                          char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  const Tensor input = FFCObjectWrapper::unwrap(input_);
+  Tensor const input = FFCObjectWrapper::unwrap(input_);
   Tensor tensor = handle->pow(input, exponent, name);
   DEBUG_PRINT("[Pow] new Tensor %p, input %p, exponent %f, name %s",
               tensor,
@@ -365,13 +424,13 @@ flexflow_tensor_t flexflow_model_add_pow(flexflow_model_t handle_,
 }
 
 flexflow_tensor_t flexflow_model_add_mean(flexflow_model_t handle_,
-                                          const flexflow_tensor_t input_,
+                                          flexflow_tensor_t const input_,
                                           int *dims,
                                           int n,
                                           bool keepdims,
                                           char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  const Tensor input = FFCObjectWrapper::unwrap(input_);
+  Tensor const input = FFCObjectWrapper::unwrap(input_);
   std::vector<int> dims_vec;
   char cbuffer[256];
   char *cbuffer_ptr = cbuffer;
@@ -396,7 +455,7 @@ flexflow_tensor_t flexflow_model_add_mean(flexflow_model_t handle_,
 
 flexflow_tensor_t
     flexflow_model_add_conv2d(flexflow_model_t handle_,
-                              const flexflow_tensor_t input_,
+                              flexflow_tensor_t const input_,
                               int out_channels,
                               int kernel_h,
                               int kernel_w,
@@ -412,7 +471,7 @@ flexflow_tensor_t
                               flexflow_initializer_t bias_initializer_,
                               char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  const Tensor input = FFCObjectWrapper::unwrap_const(input_);
+  Tensor const input = FFCObjectWrapper::unwrap_const(input_);
   Layer *shared_op = FFCObjectWrapper::unwrap(shared_op_);
   Initializer *kernel_initializer =
       FFCObjectWrapper::unwrap(kernel_initializer_);
@@ -460,35 +519,37 @@ flexflow_tensor_t
 
 flexflow_tensor_t
     flexflow_model_add_embedding(flexflow_model_t handle_,
-                                 const flexflow_tensor_t input_,
-                                 int num_entires,
+                                 flexflow_tensor_t const input_,
+                                 int num_entries,
                                  int out_dim,
                                  enum AggrMode aggr,
+                                 DataType dtype,
                                  flexflow_op_t shared_op_,
                                  flexflow_initializer_t kernel_initializer_,
                                  char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  const Tensor input = FFCObjectWrapper::unwrap_const(input_);
+  Tensor const input = FFCObjectWrapper::unwrap_const(input_);
   Layer *shared_op = FFCObjectWrapper::unwrap(shared_op_);
   Initializer *kernel_initializer =
       FFCObjectWrapper::unwrap(kernel_initializer_);
   // TODO: update the flexflow_c and Python API to support other data types
   // Currently we assume it's float
   Tensor tensor = handle->embedding(input,
-                                    num_entires,
+                                    num_entries,
                                     out_dim,
                                     aggr,
-                                    DT_FLOAT,
+                                    dtype,
                                     shared_op,
                                     kernel_initializer,
                                     name);
-  DEBUG_PRINT("[Embedding] new Tensor %p, input %p, num_entires %d, out_dim "
-              "%d, aggr %d, shared_op %p, kernel_init %p, name %s",
+  DEBUG_PRINT("[Embedding] new Tensor %p, input %p, num_entries %d, out_dim "
+              "%d, aggr %d, dtype %d, shared_op %p, kernel_init %p, name %s",
               tensor,
               input,
-              num_entires,
+              num_entries,
               out_dim,
               aggr,
+              dtype,
               shared_op,
               kernel_initializer,
               name);
@@ -541,7 +602,7 @@ flexflow_tensor_t
 }
 
 flexflow_tensor_t flexflow_model_add_batch_norm(flexflow_model_t handle_,
-                                                const flexflow_tensor_t input_,
+                                                flexflow_tensor_t const input_,
                                                 bool relu,
                                                 char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
@@ -561,20 +622,26 @@ flexflow_tensor_t flexflow_model_add_batch_norm(flexflow_model_t handle_,
 }
 
 flexflow_tensor_t flexflow_model_add_layer_norm(flexflow_model_t handle_,
-                                                const flexflow_tensor_t input_,
+                                                flexflow_tensor_t const input_,
                                                 int n,
                                                 int *axes,
                                                 bool elementwise_affine,
                                                 float eps,
+                                                bool use_bias,
                                                 char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  const Tensor input = FFCObjectWrapper::unwrap(input_);
+  Tensor const input = FFCObjectWrapper::unwrap(input_);
   std::vector<int> axes_vec;
   for (int i = 0; i < n; i++) {
     axes_vec.push_back(axes[i]);
   }
-  Tensor tensor = handle->layer_norm(
-      input, axes_vec, elementwise_affine, eps, input->data_type, name);
+  Tensor tensor = handle->layer_norm(input,
+                                     axes_vec,
+                                     elementwise_affine,
+                                     eps,
+                                     use_bias,
+                                     input->data_type,
+                                     name);
   DEBUG_PRINT("[LayerNorm] new Tensor %p, input %p, elementwise_affine %d, eps "
               "%f, name %s",
               tensor,
@@ -585,9 +652,139 @@ flexflow_tensor_t flexflow_model_add_layer_norm(flexflow_model_t handle_,
   return FFCObjectWrapper::wrap(tensor);
 }
 
+flexflow_tensor_t *
+    flexflow_model_add_residual_layer_norm(flexflow_model_t handle_,
+                                           flexflow_tensor_t const input_,
+                                           flexflow_tensor_t const residual1_,
+                                           flexflow_tensor_t const residual2_,
+                                           bool use_two_residuals,
+                                           int n,
+                                           int *axes,
+                                           bool elementwise_affine,
+                                           float eps,
+                                           bool use_bias,
+                                           bool inplace_residual,
+                                           char const *name) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  Tensor const input = FFCObjectWrapper::unwrap(input_);
+  Tensor const residual1 = FFCObjectWrapper::unwrap(residual1_);
+  Tensor const residual2 =
+      use_two_residuals ? FFCObjectWrapper::unwrap(residual2_) : nullptr;
+  Tensor tensor_outputs[2];
+  std::vector<int> axes_vec;
+  for (int i = 0; i < n; i++) {
+    axes_vec.push_back(axes[i]);
+  }
+  if (use_two_residuals) {
+    assert(residual2 != nullptr);
+  }
+  handle->residual_layer_norm(input,
+                              residual1,
+                              residual2,
+                              tensor_outputs,
+                              use_two_residuals,
+                              axes_vec,
+                              elementwise_affine,
+                              eps,
+                              use_bias,
+                              inplace_residual,
+                              input->data_type,
+                              name);
+  assert(tensor_outputs[0] != nullptr);
+  assert(tensor_outputs[1] != nullptr);
+  DEBUG_PRINT("[ResidualLayerNorm] input %p, residual1 %p, residual2 "
+              "%p, output0: %p, "
+              "output1: %p, use_two_residuals: %d, elementwise_affine %d, eps "
+              "%f, use_bias: %d, inplace_residual: %d, name %s",
+              input,
+              residual1,
+              residual2,
+              tensor_outputs[0],
+              tensor_outputs[1],
+              use_two_residuals,
+              elementwise_affine,
+              eps,
+              use_bias,
+              inplace_residual,
+              name);
+  flexflow_tensor_t *tensor_outputs_wrapped =
+      (flexflow_tensor_t *)calloc(2, sizeof(flexflow_tensor_t));
+  tensor_outputs_wrapped[0] = FFCObjectWrapper::wrap(tensor_outputs[0]);
+  tensor_outputs_wrapped[1] = FFCObjectWrapper::wrap(tensor_outputs[1]);
+  return tensor_outputs_wrapped;
+}
+
+flexflow_tensor_t *flexflow_model_add_add_bias_residual_layer_norm(
+    flexflow_model_t handle_,
+    flexflow_tensor_t const input_,
+    flexflow_tensor_t const residual_,
+    int n,
+    int *axes,
+    bool elementwise_affine,
+    float eps,
+    bool use_bias,
+    bool inplace_residual,
+    char const *name) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  Tensor const input = FFCObjectWrapper::unwrap(input_);
+  Tensor const residual = FFCObjectWrapper::unwrap(residual_);
+  Tensor tensor_outputs[2];
+  std::vector<int> axes_vec;
+  for (int i = 0; i < n; i++) {
+    axes_vec.push_back(axes[i]);
+  }
+  handle->add_bias_residual_layer_norm(input,
+                                       residual,
+                                       tensor_outputs,
+                                       axes_vec,
+                                       elementwise_affine,
+                                       eps,
+                                       use_bias,
+                                       inplace_residual,
+                                       input->data_type,
+                                       name);
+  assert(tensor_outputs[0] != nullptr);
+  assert(tensor_outputs[1] != nullptr);
+  DEBUG_PRINT("[AddBiasResidualLayerNorm] input %p, residual %p, output0: %p, "
+              "output1: %p, elementwise_affine %d, eps "
+              "%f, use_bias %d, inplace_residual: %d, name %s",
+              input,
+              residual,
+              tensor_outputs[0],
+              tensor_outputs[1],
+              elementwise_affine,
+              eps,
+              use_bias,
+              inplace_residual,
+              name);
+  flexflow_tensor_t *tensor_outputs_wrapped =
+      (flexflow_tensor_t *)calloc(2, sizeof(flexflow_tensor_t));
+  tensor_outputs_wrapped[0] = FFCObjectWrapper::wrap(tensor_outputs[0]);
+  tensor_outputs_wrapped[1] = FFCObjectWrapper::wrap(tensor_outputs[1]);
+  return tensor_outputs_wrapped;
+}
+
+flexflow_tensor_t
+    flexflow_model_add_sigmoid_silu_multi(flexflow_model_t handle_,
+                                          flexflow_tensor_t const input1_,
+                                          flexflow_tensor_t const input2_,
+                                          char const *name) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  Tensor const input1 = FFCObjectWrapper::unwrap(input1_);
+  Tensor const input2 = FFCObjectWrapper::unwrap(input2_);
+  Tensor tensor =
+      handle->sigmoid_silu_multi(input1, input2, input1->data_type, name);
+  DEBUG_PRINT("[SigmoidSiluMulti] new Tensor %p, input1 %p, input2 %p, name %s",
+              tensor,
+              input1,
+              input2,
+              name);
+  return FFCObjectWrapper::wrap(tensor);
+}
+
 flexflow_tensor_t flexflow_model_add_batch_matmul(flexflow_model_t handle_,
-                                                  const flexflow_tensor_t a_,
-                                                  const flexflow_tensor_t b_,
+                                                  flexflow_tensor_t const a_,
+                                                  flexflow_tensor_t const b_,
                                                   int a_seq_length_dim,
                                                   int b_seq_length_dim) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
@@ -601,7 +798,7 @@ flexflow_tensor_t flexflow_model_add_batch_matmul(flexflow_model_t handle_,
 
 flexflow_tensor_t flexflow_model_add_dense(
     flexflow_model_t handle_,
-    const flexflow_tensor_t input_,
+    flexflow_tensor_t const input_,
     int out_dim,
     enum ActiMode activation /* AC_MODE_NONE */,
     bool use_bias /* true */,
@@ -613,7 +810,7 @@ flexflow_tensor_t flexflow_model_add_dense(
     float kernel_reg_lambda,
     char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
-  const Tensor input = FFCObjectWrapper::unwrap_const(input_);
+  Tensor const input = FFCObjectWrapper::unwrap_const(input_);
   Layer *shared_op = FFCObjectWrapper::unwrap(shared_op_);
   Initializer *kernel_initializer =
       FFCObjectWrapper::unwrap(kernel_initializer_);
@@ -719,8 +916,8 @@ flexflow_tensor_t flexflow_model_add_flat(flexflow_model_t handle_,
 }
 
 flexflow_tensor_t flexflow_model_add_gather(flexflow_model_t handle_,
-                                            const flexflow_tensor_t input_,
-                                            const flexflow_tensor_t index_,
+                                            flexflow_tensor_t const input_,
+                                            flexflow_tensor_t const index_,
                                             int dim,
                                             char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
@@ -737,20 +934,21 @@ flexflow_tensor_t flexflow_model_add_gather(flexflow_model_t handle_,
 }
 
 flexflow_tensor_t flexflow_model_add_softmax(flexflow_model_t handle_,
-                                             const flexflow_tensor_t input_,
+                                             flexflow_tensor_t const input_,
                                              int dim,
                                              bool last_layer,
                                              char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
   Tensor input = FFCObjectWrapper::unwrap(input_);
-  Tensor tensor = handle->softmax(input, dim, last_layer, name);
+  Tensor tensor =
+      handle->softmax(input, dim, last_layer, input->data_type, name);
   DEBUG_PRINT(
       "[Softmax] new Tensor %p, input %p, name %s", tensor, input, name);
   return FFCObjectWrapper::wrap(tensor);
 }
 
 flexflow_tensor_t flexflow_model_add_transpose(flexflow_model_t handle_,
-                                               const flexflow_tensor_t input_,
+                                               flexflow_tensor_t const input_,
                                                int n,
                                                int *perm,
                                                char const *name) {
@@ -770,7 +968,7 @@ flexflow_tensor_t flexflow_model_add_transpose(flexflow_model_t handle_,
 }
 
 flexflow_tensor_t flexflow_model_add_reshape(flexflow_model_t handle_,
-                                             const flexflow_tensor_t input_,
+                                             flexflow_tensor_t const input_,
                                              int n,
                                              int *shape,
                                              char const *name) {
@@ -790,7 +988,7 @@ flexflow_tensor_t flexflow_model_add_reshape(flexflow_model_t handle_,
 }
 
 flexflow_tensor_t flexflow_model_add_reverse(flexflow_model_t handle_,
-                                             const flexflow_tensor_t input_,
+                                             flexflow_tensor_t const input_,
                                              int axis,
                                              char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
@@ -806,7 +1004,7 @@ flexflow_tensor_t flexflow_model_add_reverse(flexflow_model_t handle_,
 
 flexflow_tensor_t
     flexflow_model_add_scalar_multiply(flexflow_model_t handle_,
-                                       const flexflow_tensor_t input_,
+                                       flexflow_tensor_t const input_,
                                        float const scalar,
                                        bool inplace,
                                        char const *name) {
@@ -822,7 +1020,7 @@ flexflow_tensor_t
 }
 
 flexflow_tensor_t flexflow_model_add_scalar_add(flexflow_model_t handle_,
-                                                const flexflow_tensor_t input_,
+                                                flexflow_tensor_t const input_,
                                                 float const scalar,
                                                 bool inplace,
                                                 char const *name) {
@@ -838,7 +1036,7 @@ flexflow_tensor_t flexflow_model_add_scalar_add(flexflow_model_t handle_,
 }
 
 flexflow_tensor_t flexflow_model_add_scalar_sub(flexflow_model_t handle_,
-                                                const flexflow_tensor_t input_,
+                                                flexflow_tensor_t const input_,
                                                 float const scalar,
                                                 bool inplace,
                                                 char const *name) {
@@ -856,7 +1054,7 @@ flexflow_tensor_t flexflow_model_add_scalar_sub(flexflow_model_t handle_,
 
 flexflow_tensor_t
     flexflow_model_add_scalar_truediv(flexflow_model_t handle_,
-                                      const flexflow_tensor_t input_,
+                                      flexflow_tensor_t const input_,
                                       float const scalar,
                                       bool inplace,
                                       char const *name) {
@@ -873,7 +1071,7 @@ flexflow_tensor_t
 }
 
 flexflow_tensor_t flexflow_model_add_gelu(flexflow_model_t handle_,
-                                          const flexflow_tensor_t input_,
+                                          flexflow_tensor_t const input_,
                                           char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
   Tensor input = FFCObjectWrapper::unwrap(input_);
@@ -883,7 +1081,7 @@ flexflow_tensor_t flexflow_model_add_gelu(flexflow_model_t handle_,
 }
 
 flexflow_tensor_t flexflow_model_add_identity(flexflow_model_t handle_,
-                                              const flexflow_tensor_t input_,
+                                              flexflow_tensor_t const input_,
                                               char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
   Tensor input = FFCObjectWrapper::unwrap(input_);
@@ -894,7 +1092,7 @@ flexflow_tensor_t flexflow_model_add_identity(flexflow_model_t handle_,
 }
 
 flexflow_tensor_t flexflow_model_add_relu(flexflow_model_t handle_,
-                                          const flexflow_tensor_t input_,
+                                          flexflow_tensor_t const input_,
                                           bool inplace,
                                           char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
@@ -905,7 +1103,7 @@ flexflow_tensor_t flexflow_model_add_relu(flexflow_model_t handle_,
 }
 
 flexflow_tensor_t flexflow_model_add_sigmoid(flexflow_model_t handle_,
-                                             const flexflow_tensor_t input_,
+                                             flexflow_tensor_t const input_,
                                              char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
   Tensor input = FFCObjectWrapper::unwrap(input_);
@@ -916,7 +1114,7 @@ flexflow_tensor_t flexflow_model_add_sigmoid(flexflow_model_t handle_,
 }
 
 flexflow_tensor_t flexflow_model_add_tanh(flexflow_model_t handle_,
-                                          const flexflow_tensor_t input_,
+                                          flexflow_tensor_t const input_,
                                           char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
   Tensor input = FFCObjectWrapper::unwrap(input_);
@@ -926,7 +1124,7 @@ flexflow_tensor_t flexflow_model_add_tanh(flexflow_model_t handle_,
 }
 
 flexflow_tensor_t flexflow_model_add_elu(flexflow_model_t handle_,
-                                         const flexflow_tensor_t input_,
+                                         flexflow_tensor_t const input_,
                                          bool inplace,
                                          char const *name) {
   FFModel *handle = FFCObjectWrapper::unwrap(handle_);
@@ -937,7 +1135,7 @@ flexflow_tensor_t flexflow_model_add_elu(flexflow_model_t handle_,
 }
 
 flexflow_tensor_t flexflow_model_add_dropout(flexflow_model_t handle_,
-                                             const flexflow_tensor_t input_,
+                                             flexflow_tensor_t const input_,
                                              float rate,
                                              unsigned long long seed,
                                              char const *name) {
@@ -955,9 +1153,9 @@ flexflow_tensor_t flexflow_model_add_dropout(flexflow_model_t handle_,
 
 flexflow_tensor_t flexflow_model_add_multihead_attention(
     flexflow_model_t handle_,
-    const flexflow_tensor_t query_,
-    const flexflow_tensor_t key_,
-    const flexflow_tensor_t value_,
+    flexflow_tensor_t const query_,
+    flexflow_tensor_t const key_,
+    flexflow_tensor_t const value_,
     int embed_dim,
     int num_heads,
     int kdim,
@@ -985,6 +1183,7 @@ flexflow_tensor_t flexflow_model_add_multihead_attention(
                                               bias,
                                               add_bias_kv,
                                               add_zero_attn,
+                                              query->data_type,
                                               kernel_initializer,
                                               name);
   DEBUG_PRINT("[MultiHeadAttention] new Tensor %p, query %p, key %p, value %p, "
@@ -1005,6 +1204,373 @@ flexflow_tensor_t flexflow_model_add_multihead_attention(
               kernel_initializer,
               name);
   return FFCObjectWrapper::wrap(tensor);
+}
+
+flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention(
+    flexflow_model_t handle_,
+    flexflow_tensor_t const input_,
+    int embed_dim,
+    int num_heads,
+    int kdim,
+    int vdim,
+    float dropout,
+    bool bias,
+    bool add_bias_kv,
+    bool add_zero_attn,
+    enum DataType data_type,
+    flexflow_initializer_t kernel_initializer_,
+    bool apply_rotary_embedding,
+    bool scaling_query,
+    float scaling_factor,
+    bool qk_prod_scaling,
+    bool position_bias,
+    char const *name) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  Tensor input = FFCObjectWrapper::unwrap(input_);
+  Initializer *kernel_initializer =
+      FFCObjectWrapper::unwrap(kernel_initializer_);
+  Tensor tensor = handle->inc_multihead_self_attention(input,
+                                                       embed_dim,
+                                                       num_heads,
+                                                       kdim,
+                                                       vdim,
+                                                       dropout,
+                                                       bias,
+                                                       add_bias_kv,
+                                                       add_zero_attn,
+                                                       data_type,
+                                                       kernel_initializer,
+                                                       apply_rotary_embedding,
+                                                       scaling_query,
+                                                       scaling_factor,
+                                                       qk_prod_scaling,
+                                                       position_bias,
+                                                       name);
+  return FFCObjectWrapper::wrap(tensor);
+}
+
+flexflow_tensor_t flexflow_model_add_spec_inc_multihead_self_attention(
+    flexflow_model_t handle_,
+    flexflow_tensor_t const input_,
+    int embed_dim,
+    int num_heads,
+    int kdim,
+    int vdim,
+    float dropout,
+    bool bias,
+    bool add_bias_kv,
+    bool add_zero_attn,
+    enum DataType data_type,
+    flexflow_initializer_t kernel_initializer_,
+    bool apply_rotary_embedding,
+    bool scaling_query,
+    float scaling_factor,
+    bool qk_prod_scaling,
+    bool position_bias,
+    char const *name) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  Tensor input = FFCObjectWrapper::unwrap(input_);
+  Initializer *kernel_initializer =
+      FFCObjectWrapper::unwrap(kernel_initializer_);
+  Tensor tensor =
+      handle->spec_inc_multihead_self_attention(input,
+                                                embed_dim,
+                                                num_heads,
+                                                kdim,
+                                                vdim,
+                                                dropout,
+                                                bias,
+                                                add_bias_kv,
+                                                add_zero_attn,
+                                                data_type,
+                                                kernel_initializer,
+                                                apply_rotary_embedding,
+                                                scaling_query,
+                                                scaling_factor,
+                                                qk_prod_scaling,
+                                                position_bias,
+                                                name);
+  return FFCObjectWrapper::wrap(tensor);
+}
+
+flexflow_tensor_t flexflow_model_add_inc_multihead_self_attention_verify(
+    flexflow_model_t handle_,
+    flexflow_tensor_t const input_,
+    int embed_dim,
+    int num_heads,
+    int kdim,
+    int vdim,
+    float dropout,
+    bool bias,
+    bool add_bias_kv,
+    bool add_zero_attn,
+    enum DataType data_type,
+    flexflow_initializer_t kernel_initializer_,
+    bool apply_rotary_embedding,
+    bool scaling_query,
+    float scaling_factor,
+    bool qk_prod_scaling,
+    bool position_bias,
+    char const *name) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  Tensor input = FFCObjectWrapper::unwrap(input_);
+  Initializer *kernel_initializer =
+      FFCObjectWrapper::unwrap(kernel_initializer_);
+  Tensor tensor =
+      handle->inc_multihead_self_attention_verify(input,
+                                                  embed_dim,
+                                                  num_heads,
+                                                  kdim,
+                                                  vdim,
+                                                  dropout,
+                                                  bias,
+                                                  add_bias_kv,
+                                                  add_zero_attn,
+                                                  data_type,
+                                                  kernel_initializer,
+                                                  apply_rotary_embedding,
+                                                  scaling_query,
+                                                  scaling_factor,
+                                                  qk_prod_scaling,
+                                                  position_bias,
+                                                  name);
+  return FFCObjectWrapper::wrap(tensor);
+}
+
+flexflow_tensor_t flexflow_model_add_inc_multiquery_self_attention(
+    flexflow_model_t handle_,
+    flexflow_tensor_t const input_,
+    int embed_dim,
+    int num_q_heads,
+    int num_kv_heads,
+    int kdim,
+    int vdim,
+    float dropout,
+    bool bias,
+    bool add_bias_kv,
+    bool add_zero_attn,
+    enum DataType data_type,
+    flexflow_initializer_t kernel_initializer_,
+    bool apply_rotary_embedding,
+    bool scaling_query,
+    float scaling_factor,
+    bool qk_prod_scaling,
+    bool position_bias,
+    char const *name) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  Tensor input = FFCObjectWrapper::unwrap(input_);
+  Initializer *kernel_initializer =
+      FFCObjectWrapper::unwrap(kernel_initializer_);
+  Tensor tensor = handle->inc_multiquery_self_attention(input,
+                                                        embed_dim,
+                                                        num_q_heads,
+                                                        num_kv_heads,
+                                                        kdim,
+                                                        vdim,
+                                                        dropout,
+                                                        bias,
+                                                        add_bias_kv,
+                                                        add_zero_attn,
+                                                        data_type,
+                                                        kernel_initializer,
+                                                        apply_rotary_embedding,
+                                                        scaling_query,
+                                                        scaling_factor,
+                                                        qk_prod_scaling,
+                                                        position_bias,
+                                                        name);
+  return FFCObjectWrapper::wrap(tensor);
+}
+
+flexflow_tensor_t flexflow_model_add_spec_inc_multiquery_self_attention(
+    flexflow_model_t handle_,
+    flexflow_tensor_t const input_,
+    int embed_dim,
+    int num_q_heads,
+    int num_kv_heads,
+    int kdim,
+    int vdim,
+    float dropout,
+    bool bias,
+    bool add_bias_kv,
+    bool add_zero_attn,
+    enum DataType data_type,
+    flexflow_initializer_t kernel_initializer_,
+    bool apply_rotary_embedding,
+    bool scaling_query,
+    float scaling_factor,
+    bool qk_prod_scaling,
+    bool position_bias,
+    char const *name) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  Tensor input = FFCObjectWrapper::unwrap(input_);
+  Initializer *kernel_initializer =
+      FFCObjectWrapper::unwrap(kernel_initializer_);
+  Tensor tensor =
+      handle->spec_inc_multiquery_self_attention(input,
+                                                 embed_dim,
+                                                 num_q_heads,
+                                                 num_kv_heads,
+                                                 kdim,
+                                                 vdim,
+                                                 dropout,
+                                                 bias,
+                                                 add_bias_kv,
+                                                 add_zero_attn,
+                                                 data_type,
+                                                 kernel_initializer,
+                                                 apply_rotary_embedding,
+                                                 scaling_query,
+                                                 scaling_factor,
+                                                 qk_prod_scaling,
+                                                 position_bias,
+                                                 name);
+  return FFCObjectWrapper::wrap(tensor);
+}
+
+flexflow_tensor_t flexflow_model_add_inc_multiquery_self_attention_verify(
+    flexflow_model_t handle_,
+    flexflow_tensor_t const input_,
+    int embed_dim,
+    int num_q_heads,
+    int num_kv_heads,
+    int kdim,
+    int vdim,
+    float dropout,
+    bool bias,
+    bool add_bias_kv,
+    bool add_zero_attn,
+    enum DataType data_type,
+    flexflow_initializer_t kernel_initializer_,
+    bool apply_rotary_embedding,
+    bool scaling_query,
+    float scaling_factor,
+    bool qk_prod_scaling,
+    bool position_bias,
+    char const *name) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  Tensor input = FFCObjectWrapper::unwrap(input_);
+  Initializer *kernel_initializer =
+      FFCObjectWrapper::unwrap(kernel_initializer_);
+  Tensor tensor =
+      handle->inc_multiquery_self_attention_verify(input,
+                                                   embed_dim,
+                                                   num_q_heads,
+                                                   num_kv_heads,
+                                                   kdim,
+                                                   vdim,
+                                                   dropout,
+                                                   bias,
+                                                   add_bias_kv,
+                                                   add_zero_attn,
+                                                   data_type,
+                                                   kernel_initializer,
+                                                   apply_rotary_embedding,
+                                                   scaling_query,
+                                                   scaling_factor,
+                                                   qk_prod_scaling,
+                                                   position_bias,
+                                                   name);
+  return FFCObjectWrapper::wrap(tensor);
+}
+
+flexflow_tensor_t flexflow_model_add_rms_norm(flexflow_model_t handle_,
+                                              flexflow_tensor_t const input_,
+                                              float eps,
+                                              int dim,
+                                              char const *name) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  Tensor input = FFCObjectWrapper::unwrap(input_);
+  Tensor tensor = handle->rms_norm(input, eps, dim, input->data_type, name);
+  return FFCObjectWrapper::wrap(tensor);
+}
+
+flexflow_tensor_t *
+    flexflow_model_add_residual_rms_norm(flexflow_model_t handle_,
+                                         flexflow_tensor_t const input1_,
+                                         flexflow_tensor_t const input2_,
+                                         float eps,
+                                         int dim,
+                                         bool inplace_residual,
+                                         char const *name) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  Tensor input1 = FFCObjectWrapper::unwrap(input1_);
+  Tensor input2 = FFCObjectWrapper::unwrap(input2_);
+  Tensor tensor_outputs[2];
+  handle->residual_rms_norm(input1,
+                            input2,
+                            tensor_outputs,
+                            eps,
+                            dim,
+                            inplace_residual,
+                            input1->data_type,
+                            name);
+  assert(tensor_outputs[0] != nullptr);
+  assert(tensor_outputs[1] != nullptr);
+  flexflow_tensor_t *tensor_outputs_wrapped =
+      (flexflow_tensor_t *)calloc(2, sizeof(flexflow_tensor_t));
+  tensor_outputs_wrapped[0] = FFCObjectWrapper::wrap(tensor_outputs[0]);
+  tensor_outputs_wrapped[1] = FFCObjectWrapper::wrap(tensor_outputs[1]);
+  return tensor_outputs_wrapped;
+}
+
+flexflow_tensor_t flexflow_model_add_arg_top_k(flexflow_model_t handle_,
+                                               flexflow_tensor_t const input_,
+                                               int k,
+                                               bool sorted,
+                                               bool speculative_decoding,
+                                               char const *name) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  Tensor input = FFCObjectWrapper::unwrap(input_);
+  Tensor tensor =
+      handle->arg_top_k(input, k, sorted, speculative_decoding, name);
+  return FFCObjectWrapper::wrap(tensor);
+}
+
+flexflow_tensor_t flexflow_model_add_beam_top_k(flexflow_model_t handle_,
+                                                flexflow_tensor_t const input_,
+                                                int max_beam_size,
+                                                bool sorted,
+                                                char const *name) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  Tensor input = FFCObjectWrapper::unwrap(input_);
+  Tensor tensor = handle->beam_top_k(input, max_beam_size, sorted, name);
+  return FFCObjectWrapper::wrap(tensor);
+}
+
+flexflow_tensor_t flexflow_model_add_sampling(flexflow_model_t handle_,
+                                              flexflow_tensor_t const input_,
+                                              float top_p,
+                                              char const *name) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  Tensor input = FFCObjectWrapper::unwrap(input_);
+  Tensor tensor = handle->sampling(input, top_p, name);
+  return FFCObjectWrapper::wrap(tensor);
+}
+
+flexflow_tensor_t flexflow_model_add_argmax(flexflow_model_t handle_,
+                                            flexflow_tensor_t const input_,
+                                            bool beam_search,
+                                            char const *name) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  Tensor input = FFCObjectWrapper::unwrap(input_);
+  Tensor tensor = handle->argmax(input, beam_search, name);
+  return FFCObjectWrapper::wrap(tensor);
+}
+
+flexflow_peft_model_id_t flexflow_model_add_lora_layer(
+    flexflow_model_t handle_,
+    flexflow_lora_linear_config_t const peft_config_) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  LoraLinearConfig const *peft_config = FFCObjectWrapper::unwrap(peft_config_);
+  PEFTModelID *peft_model_id = handle->add_lora_layer(*peft_config);
+
+  DEBUG_PRINT("[Add Lora Layer] model handle: %p, peft_config handle %p, "
+              "peft_model_id: %p",
+              handle,
+              peft_config,
+              peft_model_id);
+  return FFCObjectWrapper::wrap(peft_model_id);
 }
 
 void flexflow_model_set_sgd_optimizer(flexflow_model_t handle_,
@@ -1053,6 +1619,98 @@ flexflow_perf_metrics_t
               perf_metrics,
               perf_metrics->train_correct);
   return FFCObjectWrapper::wrap(perf_metrics);
+}
+
+void flexflow_model_set_transformer_layer_id(flexflow_model_t handle_, int id) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_transformer_layer_id(id);
+}
+
+void flexflow_model_generate(flexflow_model_t handle_,
+                             int num_requests,
+                             enum RequestType *request_types,
+                             char const **input_texts,
+                             char **output_texts,
+                             int *max_seq_lengths,
+                             flexflow_peft_model_id_t *peft_model_ids,
+                             char const **dataset_filepaths,
+                             int *training_steps,
+                             int **output_length_and_tokens,
+                             int *num_finetuning_losses,
+                             float *finetuning_losses) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  std::vector<Request> requests;
+
+  for (int i = 0; i < num_requests; i++) {
+    if (request_types[i] == RequestType::REQ_INFERENCE) {
+      std::string const text_str(input_texts[i]);
+      Request inference_req;
+      inference_req.prompt = text_str;
+      inference_req.max_sequence_length = max_seq_lengths[i];
+      PEFTModelID *peft_model_id = FFCObjectWrapper::unwrap(peft_model_ids[i]);
+      if (peft_model_id != nullptr) {
+        inference_req.peft_model_id = *peft_model_id;
+      }
+      requests.push_back(inference_req);
+      DEBUG_PRINT("[Model] generate[%d] %p %s %i",
+                  i,
+                  handle,
+                  text_str.c_str(),
+                  max_seq_lengths[i]);
+    } else if (request_types[i] == RequestType::REQ_FINETUNING) {
+      Request fine_tuning_req;
+      fine_tuning_req.req_type = RequestType::REQ_FINETUNING;
+      fine_tuning_req.max_sequence_length = max_seq_lengths[i];
+      PEFTModelID *peft_model_id = FFCObjectWrapper::unwrap(peft_model_ids[i]);
+      if (peft_model_id != nullptr) {
+        fine_tuning_req.peft_model_id = *peft_model_id;
+      }
+      std::string const dataset_fp(dataset_filepaths[i]);
+      fine_tuning_req.dataset_filepath = dataset_fp;
+      fine_tuning_req.max_training_steps = training_steps[i];
+      requests.push_back(fine_tuning_req);
+      DEBUG_PRINT("[Model] finetune[%d] %p %s %i %i",
+                  i,
+                  handle,
+                  dataset_fp.c_str(),
+                  max_seq_lengths[i],
+                  training_steps[i]);
+    } else {
+      assert(false && "Unknown request type");
+    }
+  }
+
+  std::vector<GenerationResult> results = handle->generate(requests);
+
+  for (int i = 0; i < num_requests; i++) {
+    if (request_types[i] == RequestType::REQ_INFERENCE) {
+      // If the prompt exceeds max seq len, check that we return the prompt with
+      // no additional token. Otherwise, check that the output does not exceed
+      // the max sequence length.
+      assert(results[i].output_tokens.size() <= max_seq_lengths[i] ||
+             results[i].output_tokens.size() == results[i].input_tokens.size());
+      output_length_and_tokens[i][0] = results[i].output_tokens.size();
+      std::copy(results[i].output_tokens.begin(),
+                results[i].output_tokens.end(),
+                output_length_and_tokens[i] + 1);
+      std::memcpy(output_texts[i],
+                  results[i].output_text.c_str(),
+                  results[i].output_text.length());
+    } else if (request_types[i] == RequestType::REQ_FINETUNING) {
+      assert(results[i].finetuning_losses.size() > 0);
+      *num_finetuning_losses = results[i].finetuning_losses.size();
+      // *finetuning_losses = results[i].finetuning_losses.data();
+      std::memcpy(finetuning_losses,
+                  results[i].finetuning_losses.data(),
+                  results[i].finetuning_losses.size() * sizeof(float));
+    }
+  }
+}
+
+void flexflow_model_set_position_offset(flexflow_model_t handle_,
+                                        int const offset) {
+  FFModel *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_position_offset(offset);
 }
 
 // -----------------------------------------------------------------------
@@ -1933,4 +2591,473 @@ void flexflow_perform_registration(void) {
                                          true /*global*/);
   Runtime::perform_registration_callback(FFMapper::update_mappers,
                                          true /*global*/);
+}
+
+// -----------------------------------------------------------------------
+// BatchConfig
+// -----------------------------------------------------------------------
+
+flexflow_batch_config_t flexflow_batch_config_create(void) {
+  BatchConfig *config = new BatchConfig();
+  DEBUG_PRINT("[BatchConfig] new %p", config);
+  return FFCObjectWrapper::wrap(config);
+}
+
+void flexflow_batch_config_destroy(flexflow_batch_config_t handle_) {
+  BatchConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  DEBUG_PRINT("[BatchConfig] delete %p", handle);
+  delete handle;
+}
+
+// -----------------------------------------------------------------------
+// TreeVerifyBatchConfig
+// -----------------------------------------------------------------------
+
+flexflow_tree_verify_batch_config_t
+    flexflow_tree_verify_batch_config_create(void) {
+  TreeVerifyBatchConfig *config = new TreeVerifyBatchConfig();
+  DEBUG_PRINT("[TreeVerifyBatchConfig] new %p", config);
+  return FFCObjectWrapper::wrap(config);
+}
+
+void flexflow_tree_verify_batch_config_destroy(
+    flexflow_tree_verify_batch_config_t handle_) {
+  TreeVerifyBatchConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  DEBUG_PRINT("[TreeVerifyBatchConfig] delete %p", handle);
+  delete handle;
+}
+
+// -----------------------------------------------------------------------
+// BeamSearchBatchConfig
+// -----------------------------------------------------------------------
+
+flexflow_beam_search_batch_config_t
+    flexflow_beam_search_batch_config_create(void) {
+  BeamSearchBatchConfig *config = new BeamSearchBatchConfig();
+  DEBUG_PRINT("[BeamSearchBatchConfig] new %p", config);
+  return FFCObjectWrapper::wrap(config);
+}
+
+void flexflow_beam_search_batch_config_destroy(
+    flexflow_beam_search_batch_config_t handle_) {
+  BeamSearchBatchConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  DEBUG_PRINT("[BeamSearchBatchConfig] delete %p", handle);
+  delete handle;
+}
+
+// -----------------------------------------------------------------------
+// RequestManager
+// -----------------------------------------------------------------------
+
+flexflow_request_manager_t flexflow_request_manager_get_request_manager(void) {
+  RequestManager *rm = RequestManager::get_request_manager();
+  DEBUG_PRINT("[RequestManager] get %p", rm);
+  return FFCObjectWrapper::wrap(rm);
+}
+
+void flexflow_request_manager_set_max_requests_per_batch(
+    flexflow_request_manager_t handle_, int max_num_requests) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_max_requests_per_batch(max_num_requests);
+  DEBUG_PRINT("[RequestManager] set max_requests_per_batch %d",
+              max_num_requests);
+}
+
+void flexflow_request_manager_set_max_tokens_per_batch(
+    flexflow_request_manager_t handle_, int max_num_tokens) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_max_tokens_per_batch(max_num_tokens);
+  DEBUG_PRINT("[RequestManager] set max_tokens_per_batch %d", max_num_tokens);
+}
+
+void flexflow_request_manager_set_max_spec_tree_token_num(
+    flexflow_request_manager_t handle_, int max_num_tokens) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_max_spec_tree_token_num(max_num_tokens);
+  DEBUG_PRINT("[RequestManager] set max_spec_tree_token_num %d",
+              max_num_tokens);
+}
+
+void flexflow_request_manager_set_max_sequence_length(
+    flexflow_request_manager_t handle_, int max_seq_length) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_max_sequence_length(max_seq_length);
+  DEBUG_PRINT("[RequestManager] set max_sequence_length %d", max_seq_length);
+}
+
+void flexflow_request_manager_set_enable_peft_finetuning(
+    flexflow_request_manager_t handle_, bool enable_peft_finetuning_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->set_enable_peft_finetuning(enable_peft_finetuning_);
+  DEBUG_PRINT("[RequestManager] set_enable_peft_finetuning %d",
+              enable_peft_finetuning_);
+}
+
+void flexflow_request_manager_register_tokenizer(
+    flexflow_request_manager_t handle_,
+    enum ModelType model_type,
+    int bos_token_id,
+    int eos_token_id,
+    char const *tokenizer_filepath) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  assert(tokenizer_filepath != nullptr &&
+         "Cannot convert nullptr char * to std::string");
+  std::string const tokenizer_filepath_str(tokenizer_filepath);
+  handle->register_tokenizer(
+      model_type, bos_token_id, eos_token_id, tokenizer_filepath_str);
+  DEBUG_PRINT(
+      "[RequestManager] register tokenizer %p %s", handle, tokenizer_filepath);
+}
+
+void flexflow_request_manager_register_output_filepath(
+    flexflow_request_manager_t handle_, char const *output_filepath) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  assert(output_filepath != nullptr &&
+         "Cannot convert nullptr char * to std::string");
+  std::string const output_filepath_str(output_filepath);
+  handle->register_output_filepath(output_filepath_str);
+  DEBUG_PRINT("[RequestManager] register output filepath %p %s",
+              handle,
+              output_filepath);
+}
+
+int flexflow_request_manager_register_ssm_model(
+    flexflow_request_manager_t handle_, flexflow_model_t model_handle_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  FFModel *model_handle = FFCObjectWrapper::unwrap(model_handle_);
+  DEBUG_PRINT("[RequestManager] register ssm %p %p", handle, model_handle);
+  return handle->register_ssm_model(model_handle);
+}
+
+void flexflow_request_manager_start_background_server(
+    flexflow_request_manager_t handle_, flexflow_model_t model_handle_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  FFModel *model_handle = FFCObjectWrapper::unwrap(model_handle_);
+  DEBUG_PRINT(
+      "[RequestManager] start background server %p %p", handle, model_handle);
+  handle->start_background_server(model_handle);
+}
+
+void flexflow_request_manager_terminate_background_server(
+    flexflow_request_manager_t handle_) {
+  RequestManager *handle = FFCObjectWrapper::unwrap(handle_);
+  DEBUG_PRINT("[RequestManager] terminate background server %p", handle);
+  handle->terminate_background_server();
+}
+
+// -----------------------------------------------------------------------
+// InferenceManager
+// -----------------------------------------------------------------------
+
+flexflow_inference_manager_t
+    flexflow_inference_manager_get_inference_manager() {
+  InferenceManager *im = InferenceManager::get_inference_manager();
+  DEBUG_PRINT("[InferenceManager] get %p", im);
+  return FFCObjectWrapper::wrap(im);
+}
+
+void flexflow_inference_manager_compile_model_and_allocate_buffer(
+    flexflow_inference_manager_t handle_, flexflow_model_t model_handle) {
+  InferenceManager *handle = FFCObjectWrapper::unwrap(handle_);
+  FFModel *model = FFCObjectWrapper::unwrap(model_handle);
+  DEBUG_PRINT("[InferenceManager] compile_model_and_allocate_buffer %p",
+              handle);
+  handle->compile_model_and_allocate_buffer(model);
+}
+
+void flexflow_inference_manager_init_operators_inference(
+    flexflow_inference_manager_t handle_, flexflow_model_t model_handle) {
+  InferenceManager *handle = FFCObjectWrapper::unwrap(handle_);
+  FFModel *model = FFCObjectWrapper::unwrap(model_handle);
+  DEBUG_PRINT("[InferenceManager] init_operators_inference %p", handle);
+  handle->init_operators_inference(model);
+}
+
+void flexflow_inference_manager_register_model_weights_loader(
+    flexflow_inference_manager_t handle_,
+    flexflow_model_t model_handle,
+    flexflow_file_data_loader_t loader_handle) {
+  InferenceManager *handle = FFCObjectWrapper::unwrap(handle_);
+  FFModel *model = FFCObjectWrapper::unwrap(model_handle);
+  FileDataLoader *loader = FFCObjectWrapper::unwrap(loader_handle);
+  DEBUG_PRINT("[InferenceManager] register_model_weights_loader %p %p %p",
+              handle,
+              model,
+              loader);
+  handle->register_model_weights_loader(model, loader);
+}
+
+// -----------------------------------------------------------------------
+// FileDataLoader
+// -----------------------------------------------------------------------
+
+flexflow_file_data_loader_t
+    flexflow_file_data_loader_create(char const *weight_file_path,
+                                     int num_q_heads,
+                                     int num_kv_heads,
+                                     int hidden_dim,
+                                     int qkv_inner_dim,
+                                     int tensor_parallelism_degree,
+                                     bool use_full_precision) {
+  assert(weight_file_path != nullptr &&
+         "Cannot convert nullptr char * to std::string");
+  std::string const weight_file_path_str(weight_file_path);
+  FileDataLoader *handle = new FileDataLoader("",
+                                              weight_file_path_str,
+                                              num_q_heads,
+                                              num_kv_heads,
+                                              hidden_dim,
+                                              qkv_inner_dim,
+                                              tensor_parallelism_degree,
+                                              use_full_precision);
+  DEBUG_PRINT("[FileDataLoader] new %p", handle);
+  return FFCObjectWrapper::wrap(handle);
+}
+
+void flexflow_file_data_loader_destroy(flexflow_file_data_loader_t handle_) {
+  FileDataLoader *handle = FFCObjectWrapper::unwrap(handle_);
+  DEBUG_PRINT("[FileDataLoader] delete %p", handle);
+  delete handle;
+}
+
+void flexflow_file_data_loader_load_weights(flexflow_file_data_loader_t handle_,
+                                            flexflow_model_t model_handle_) {
+  FileDataLoader *handle = FFCObjectWrapper::unwrap(handle_);
+  FFModel *model = FFCObjectWrapper::unwrap(model_handle_);
+  handle->load_weights(model);
+}
+
+// // -----------------------------------------------------------------------
+// // LoraSGDOptimizerConfig
+// // -----------------------------------------------------------------------
+
+// flexflow_lora_sgd_optimizer_config_t
+// flexflow_lora_sgd_optimizer_config_create(
+//     double lr, double momentum, bool nesterov, bool weight_decay) {
+//   LoraSGDOptimizerConfig *handle =
+//       new LoraSGDOptimizerConfig(lr, momentum, nesterov, weight_decay);
+//   DEBUG_PRINT("[LoraSGDOptimizerConfig] new %p", handle);
+//   return FFCObjectWrapper::wrap(handle);
+// }
+
+// void flexflow_lora_sgd_optimizer_config_destroy(
+//     flexflow_lora_sgd_optimizer_config_t handle_) {
+//   LoraSGDOptimizerConfig *handle = FFCObjectWrapper::unwrap(handle_);
+//   DEBUG_PRINT("[LoraSGDOptimizerConfig] delete %p", handle);
+//   delete handle;
+// }
+
+// // -----------------------------------------------------------------------
+// // LoraAdamOptimizerConfig
+// // -----------------------------------------------------------------------
+
+// flexflow_lora_adam_optimizer_config_t
+//     flexflow_lora_adam_optimizer_config_create(double alpha,
+//                                                double beta1,
+//                                                double beta2,
+//                                                double weight_decay,
+//                                                double epsilon) {
+//   LoraAdamOptimizerConfig *handle =
+//       new LoraAdamOptimizerConfig(alpha, beta1, beta2, weight_decay,
+//       epsilon);
+//   DEBUG_PRINT("[LoraAdamOptimizerConfig] new %p", handle);
+//   return FFCObjectWrapper::wrap(handle);
+// }
+
+// void flexflow_lora_adam_optimizer_config_destroy(
+//     flexflow_lora_adam_optimizer_config_t handle_) {
+//   LoraAdamOptimizerConfig *handle = FFCObjectWrapper::unwrap(handle_);
+//   DEBUG_PRINT("[LoraAdamOptimizerConfig] delete %p", handle);
+//   delete handle;
+// }
+
+// -----------------------------------------------------------------------
+// LoraLinearConfig
+// -----------------------------------------------------------------------
+
+flexflow_lora_linear_config_t
+    flexflow_lora_linear_config_create(char const *cache_folder_,
+                                       char const *peft_model_id_,
+                                       bool trainable,
+                                       bool init_lora_weights,
+                                       char const *base_model_name_or_path_,
+                                       char const *precision_,
+                                       int rank,
+                                       float lora_alpha,
+                                       float lora_dropout,
+                                       int num_target_modules,
+                                       char const **target_modules_,
+                                       enum OptimizerType optimizer_type,
+                                       float sgd_learning_rate,
+                                       float sgd_momentum,
+                                       bool sgd_nesterov,
+                                       float sgd_weight_decay,
+                                       float adam_alpha,
+                                       float adam_beta1,
+                                       float adam_beta2,
+                                       float adam_weight_decay,
+                                       float adam_epsilon) {
+  assert(cache_folder_ != nullptr &&
+         "Cannot convert nullptr char * to std::string");
+  assert(peft_model_id_ != nullptr &&
+         "Cannot convert nullptr char * to std::string");
+  assert(base_model_name_or_path_ != nullptr &&
+         "Cannot convert nullptr char * to std::string");
+  assert(precision_ != nullptr &&
+         "Cannot convert nullptr char * to std::string");
+  std::string const cache_folder(cache_folder_);
+  std::string const peft_model_id(peft_model_id_);
+  LoraOptimizerConfig *optim_config = nullptr;
+  if (optimizer_type == OptimizerType::OPTIMIZER_TYPE_SGD) {
+    optim_config = new LoraSGDOptimizerConfig(
+        sgd_learning_rate, sgd_momentum, sgd_nesterov, sgd_weight_decay);
+  } else if (optimizer_type == OptimizerType::OPTIMIZER_TYPE_ADAM) {
+    optim_config = new LoraAdamOptimizerConfig(
+        adam_alpha, adam_beta1, adam_beta2, adam_weight_decay, adam_epsilon);
+  }
+  std::vector<std::string> target_modules;
+  for (int i = 0; i < num_target_modules; i++) {
+    std::string const target_module(target_modules_[i]);
+    target_modules.push_back(target_module);
+  }
+  std::string const base_model_name_or_path(base_model_name_or_path_);
+  std::string const precision(precision_);
+  LoraLinearConfig *handle = new LoraLinearConfig(cache_folder,
+                                                  peft_model_id,
+                                                  trainable,
+                                                  optim_config,
+                                                  init_lora_weights,
+                                                  base_model_name_or_path,
+                                                  precision,
+                                                  rank,
+                                                  lora_alpha,
+                                                  lora_dropout,
+                                                  target_modules);
+  DEBUG_PRINT("[LoraLinearConfig] new %p", handle);
+  return FFCObjectWrapper::wrap(handle);
+}
+
+void flexflow_lora_linear_config_destroy(
+    flexflow_lora_linear_config_t handle_) {
+  LoraLinearConfig *peft_config = FFCObjectWrapper::unwrap(handle_);
+  DEBUG_PRINT("[LoraLinearConfig] delete %p", peft_config);
+  delete peft_config;
+}
+
+char const *flexflow_lora_linear_config_get_cache_folder(
+    flexflow_lora_linear_config_t handle_) {
+  LoraLinearConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->cache_folder.c_str();
+}
+
+char const *flexflow_lora_linear_config_get_peft_model_id(
+    flexflow_lora_linear_config_t handle_) {
+  LoraLinearConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->peft_model_id.c_str();
+}
+
+int flexflow_lora_linear_config_get_rank(
+    flexflow_lora_linear_config_t handle_) {
+  LoraLinearConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->rank;
+}
+
+float flexflow_lora_linear_config_get_lora_alpha(
+    flexflow_lora_linear_config_t handle_) {
+  LoraLinearConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->lora_alpha;
+}
+
+float flexflow_lora_linear_config_get_lora_dropout(
+    flexflow_lora_linear_config_t handle_) {
+  LoraLinearConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->lora_dropout;
+}
+
+bool flexflow_lora_linear_config_get_trainable(
+    flexflow_lora_linear_config_t handle_) {
+  LoraLinearConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->trainable;
+}
+
+bool flexflow_lora_linear_config_get_init_lora_weights(
+    flexflow_lora_linear_config_t handle_) {
+  LoraLinearConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->init_lora_weights;
+}
+
+char const **flexflow_lora_linear_config_get_target_modules(
+    flexflow_lora_linear_config_t handle_, int *num_target_modules) {
+  LoraLinearConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  *num_target_modules = handle->target_modules.size();
+  static std::vector<char const *> target_modules_;
+  target_modules_.clear();
+  for (auto const &target_module : handle->target_modules) {
+    target_modules_.push_back(target_module.c_str());
+  }
+  return target_modules_.data();
+}
+
+char const *flexflow_lora_linear_config_get_base_model_name_or_path(
+    flexflow_lora_linear_config_t handle_) {
+  LoraLinearConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->base_model_name_or_path.c_str();
+}
+
+char const *flexflow_lora_linear_config_get_precision(
+    flexflow_lora_linear_config_t handle_) {
+  LoraLinearConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  return handle->precision.c_str();
+}
+
+void flexflow_lora_linear_config_set_lora_alpha(
+    flexflow_lora_linear_config_t handle_, float value) {
+  LoraLinearConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->lora_alpha = value;
+}
+
+void flexflow_lora_linear_config_set_lora_dropout(
+    flexflow_lora_linear_config_t handle_, float value) {
+  LoraLinearConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->lora_dropout = value;
+}
+
+void flexflow_lora_linear_config_set_trainable(
+    flexflow_lora_linear_config_t handle_, bool value) {
+  LoraLinearConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->trainable = value;
+}
+
+void flexflow_lora_linear_config_set_init_lora_weights(
+    flexflow_lora_linear_config_t handle_, bool value) {
+  LoraLinearConfig *handle = FFCObjectWrapper::unwrap(handle_);
+  handle->init_lora_weights = value;
+}
+
+// -----------------------------------------------------------------------
+// PEFTModelID
+// -----------------------------------------------------------------------
+
+flexflow_peft_model_id_t flexflow_peft_model_id_create() {
+  PEFTModelID *handle = new PEFTModelID();
+  DEBUG_PRINT("[PEFTModelID] new %p", handle);
+  return FFCObjectWrapper::wrap(handle);
+}
+
+flexflow_peft_model_id_t flexflow_peft_model_id_create_id(size_t id) {
+  PEFTModelID *handle = new PEFTModelID(id);
+  DEBUG_PRINT("[PEFTModelID] new %p", handle);
+  return FFCObjectWrapper::wrap(handle);
+}
+
+flexflow_peft_model_id_t flexflow_peft_model_id_no_id() {
+  PEFTModelID *handle = const_cast<PEFTModelID *>(&PEFTModelID::NO_ID);
+  DEBUG_PRINT("[PEFTModelID] new %p", handle);
+  return FFCObjectWrapper::wrap(handle);
+}
+
+void flexflow_peft_model_id_destroy(flexflow_peft_model_id_t handle_) {
+  PEFTModelID *peft_model_id = FFCObjectWrapper::unwrap(handle_);
+  DEBUG_PRINT("[PEFTModelID] delete %p", peft_model_id);
+  delete peft_model_id;
 }

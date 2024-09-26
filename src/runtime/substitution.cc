@@ -18,6 +18,7 @@
 #include "flexflow/ffconst_utils.h"
 #include "flexflow/graph.h"
 #include "flexflow/graph_structures.h"
+#include "flexflow/ops/add_bias_residual_layer_norm.h"
 #include "flexflow/ops/aggregate.h"
 #include "flexflow/ops/attention.h"
 #include "flexflow/ops/concat.h"
@@ -26,15 +27,23 @@
 #include "flexflow/ops/element_binary.h"
 #include "flexflow/ops/element_unary.h"
 #include "flexflow/ops/embedding.h"
+#include "flexflow/ops/experts.h"
 #include "flexflow/ops/flat.h"
+#include "flexflow/ops/inc_multihead_self_attention.h"
 #include "flexflow/ops/linear.h"
 #include "flexflow/ops/noop.h"
 #include "flexflow/ops/pool_2d.h"
+#include "flexflow/ops/residual_layer_norm.h"
+#include "flexflow/ops/residual_rms_norm.h"
+#include "flexflow/ops/rms_norm.h"
+#include "flexflow/ops/sigmoid_silu_multi.h"
 #include "flexflow/ops/softmax.h"
 #include "flexflow/ops/split.h"
+#include "flexflow/ops/tree_inc_multihead_self_attention.h"
+#include "flexflow/parallel_ops/allreduce.h"
 #include "flexflow/parallel_ops/combine.h"
 #include "flexflow/parallel_ops/fused_parallel_op.h"
-#include "flexflow/parallel_ops/allreduce.h"
+#include "flexflow/parallel_ops/parallel_identity.h"
 #include "flexflow/parallel_ops/partition.h"
 #include "flexflow/parallel_ops/reduction.h"
 #include "flexflow/parallel_ops/replicate.h"
@@ -46,10 +55,10 @@ namespace FlexFlow::PCG {
 
 using namespace Legion;
 
-LegionRuntime::Logger::Category log_xfers("xfers");
-LegionRuntime::Logger::Category log_xfer_matches("xfer_matches");
+Legion::Logger log_xfers("xfers");
+Legion::Logger log_xfer_matches("xfer_matches");
 
-const TensorX TensorX::NO_TX = TensorX();
+TensorX const TensorX::NO_TX = TensorX();
 
 bool TensorX::operator==(TensorX const &other) const {
   return this->op == other.op && this->idx == other.idx;
@@ -147,7 +156,7 @@ tl::optional<ParallelTensor> TensorX::to_tensor(GraphXfer const *xfer) const {
   }
 }
 
-OpX::OpX(const OperatorType _type,
+OpX::OpX(OperatorType const _type,
          int num_inputs,
          int num_outputs,
          TensorX const &input0,
@@ -169,7 +178,7 @@ OpX::OpX(const OperatorType _type,
   }
 }
 
-OpX::OpX(const OperatorType _type,
+OpX::OpX(OperatorType const _type,
          int num_inputs,
          int num_outputs,
          TensorX const *input_array)
@@ -605,8 +614,9 @@ void GraphXfer::run(
     SimplificationSettings const &simplification_settings,
     int &num_matches_found,
     int &num_matches_rejected) {
-  // printf("run: depth(%d) srcOps.size(%zu) graph.size(%zu) candidates(%zu)\n",
-  // depth, srcOps.size(), graph->inEdges.size(), candidates.size());
+  // printf("run: depth(%d) srcOps.size(%zu) graph.size(%zu)
+  // candidates(%zu)\n", depth, srcOps.size(), graph->inEdges.size(),
+  // candidates.size());
   if (depth >= (int)srcOps.size()) {
     // Create dst operators
     bool pass = true;
@@ -894,8 +904,11 @@ bool GraphXfer::create_new_operator(OpX const *opx, Node &op) {
     case OP_EW_MUL:
     case OP_EW_MAX:
     case OP_EW_MIN: {
+      ElementBinaryParams params;
+      params.type = opx->type;
+      params.inplace_a = false;
       op = model->get_or_create_node<ElementBinary>({inputs[0], inputs[1]},
-                                                    {opx->type});
+                                                    params);
       break;
     }
     case OP_RELU: {
@@ -947,8 +960,12 @@ bool GraphXfer::create_new_operator(OpX const *opx, Node &op) {
     }
     case OP_SOFTMAX: {
       int softmax_dim;
+      assert(opx->matchOpX != NULL);
+      assert(opx->matchOpX->mapOp.ptr != NULL);
+      Softmax *softmax = (Softmax *)opx->matchOpX->mapOp.ptr;
       assert(opx->get_pm_constraint(PM_SOFTMAX_DIM, softmax_dim));
-      op = model->get_or_create_node<Softmax>(inputs[0], {softmax_dim});
+      SoftmaxParams params = softmax->get_params();
+      op = model->get_or_create_node<Softmax>(inputs[0], params);
       break;
     }
     case OP_REPARTITION: {
@@ -1482,6 +1499,8 @@ OpX *create_opx(sl::Operator const &op,
         case OP_REPLICATE:
           degree_key = PM_REPLICATE_DEGREE;
           break;
+        default:
+          break;
       }
 
       if (degree_key.has_value()) {
@@ -1503,6 +1522,8 @@ OpX *create_opx(sl::Operator const &op,
           break;
         case OP_REPLICATE:
           dim_key = PM_REPLICATE_DIM;
+          break;
+        default:
           break;
       }
 
@@ -1973,8 +1994,8 @@ void GraphSearchHelper::graph_optimize_with_memory(
   Graph *graph = this->construct_graph();
 
   // The input nodes may need to be duplicated because the PCG was constructed
-  // to have one input node for one input, but the actual execution graph should
-  // have the distributed version of inputs (i.e. multiple nodes).
+  // to have one input node for one input, but the actual execution graph
+  // should have the distributed version of inputs (i.e. multiple nodes).
   graph->duplicate_input_nodes();
 
   // Export an empty schedule if needed.
@@ -2260,7 +2281,8 @@ std::unique_ptr<Graph> GraphSearchHelper::base_optimize(
   int budget = model->config.search_budget;
   if (budget == 0) {
     log_xfers.warning()
-        << "Base search budget is set to 0. This is probably not what you want "
+        << "Base search budget is set to 0. This is probably not what you "
+           "want "
            "(use the --budget flag to set the base search budget)";
   }
   for (int iter = 0; iter < budget || budget == -1; iter++) {
@@ -2357,7 +2379,8 @@ std::unique_ptr<Graph> GraphSearchHelper::base_optimize_with_memory(
   int budget = model->config.search_budget;
   if (budget == 0) {
     log_xfers.warning()
-        << "Base search budget is set to 0. This is probably not what you want "
+        << "Base search budget is set to 0. This is probably not what you "
+           "want "
            "(use the --budget flag to set the base search budget)";
   }
 
@@ -2529,8 +2552,8 @@ void GraphSearchHelper::try_cache_result<GraphOptimizeResultWithMemory>(
 /**
  * @brief Get the cost/result of PCG if sequentially split it.
  *
- * @details This function is to combine the search results from DP sub-problems.
- * The sub-problems are solved by generic_sequence_optimize().
+ * @details This function is to combine the search results from DP
+ * sub-problems. The sub-problems are solved by generic_sequence_optimize().
  */
 template <typename T>
 T GraphSearchHelper::execute_sequence_split(
@@ -2709,8 +2732,8 @@ T GraphSearchHelper::generic_sequence_optimize(
             // this->generic_sequence_optimize<float>(post_graph.get(),
             // sink_node, output_shape, bottleneck_output_shape);
             // this->logger->debug() << "Cost of post_graph (" <<
-            // bottleneck_output_shape << "): " << post_cost; float current_cost
-            // = pre_cost + post_cost;
+            // bottleneck_output_shape << "): " << post_cost; float
+            // current_cost = pre_cost + post_cost;
             current_cost =
                 this->execute_sequence_split<float>(pre_graph,
                                                     post_graph,
@@ -2772,10 +2795,10 @@ T GraphSearchHelper::generic_sequence_optimize_with_memory(
     tl::optional<ParallelTensorShape> const &input_shape) {
   TAG_ENTER(this->logger);
 
-  // Try to find the result from cache first. But this will only get the cached
-  // result if the returned type is float. The float number means the best run
-  // time cost with only machine quantity (without distinguishing machine
-  // identities).
+  // Try to find the result from cache first. But this will only get the
+  // cached result if the returned type is float. The float number means the
+  // best run time cost with only machine quantity (without distinguishing
+  // machine identities).
   size_t hash = gs_dp_state_hash(graph, sink_node, output_shape, input_shape);
   tl::optional<T> cached = this->try_get_cost_from_cache<T>(hash);
   if (cached.has_value()) {
@@ -3655,6 +3678,13 @@ bool FFModel::convert_graph_to_operators(
         new_op = new Aggregate(*this, inputs, aggr->n, aggr->lambda_bal, NULL);
         break;
       }
+      case OP_EXPERTS: {
+        Experts *exp = (Experts *)node.ptr;
+        ExpertsParams params = exp->get_params();
+        new_op = new Experts(
+            *this, params, {std::begin(inputs), std::end(inputs)}, true);
+        break;
+      }
       case OP_SPLIT: {
         Split *split = (Split *)node.ptr;
         std::vector<int> splits;
@@ -3675,8 +3705,13 @@ bool FFModel::convert_graph_to_operators(
       case OP_EW_MIN: {
         assert(inList.size() == 2);
         ElementBinary *eb = (ElementBinary *)node.ptr;
-        new_op = new ElementBinary(
-            *this, eb->op_type, inputs[0], inputs[1], eb->inplace_a, NULL);
+        new_op = new ElementBinary(*this,
+                                   eb->layer_guid,
+                                   eb->op_type,
+                                   inputs[0],
+                                   inputs[1],
+                                   eb->inplace_a,
+                                   NULL);
         break;
       }
       case OP_POOL2D: {
@@ -3701,20 +3736,46 @@ bool FFModel::convert_graph_to_operators(
         new_op = new MultiHeadAttention(
             *this, *attn, inputs[0], inputs[1], inputs[2], true);
         break;
+      }
+      case OP_INC_MULTIHEAD_SELF_ATTENTION: {
+        assert(inList.size() == 1);
+        IncMultiHeadSelfAttention *attn = (IncMultiHeadSelfAttention *)node.ptr;
+        new_op = new IncMultiHeadSelfAttention(*this, *attn, inputs[0], true);
+        break;
+      }
+      case OP_TREE_INC_MULTIHEAD_SELF_ATTENTION: {
+        assert(inList.size() == 1);
+        TreeIncMultiHeadSelfAttention *attn =
+            (TreeIncMultiHeadSelfAttention *)node.ptr;
+        new_op =
+            new TreeIncMultiHeadSelfAttention(*this, *attn, inputs[0], true);
+        break;
+      }
+      case OP_RMS_NORM: {
+        assert(inList.size() == 1);
+        RMSNorm *rms = (RMSNorm *)node.ptr;
+        new_op = new RMSNorm(*this, *rms, inputs[0], true);
         break;
       }
       case OP_SOFTMAX: {
         assert(inList.size() == 1);
         Softmax *softmax = (Softmax *)node.ptr;
-        new_op = new Softmax(
-            *this, inputs[0], softmax->dim, softmax->last_layer, NULL);
+        new_op = new Softmax(*this,
+                             softmax->layer_guid,
+                             inputs[0],
+                             softmax->dim,
+                             softmax->last_layer,
+                             softmax->name);
         break;
       }
       case OP_COMBINE: {
         assert(inList.size() == 1);
         Combine *combine = (Combine *)node.ptr;
-        new_op = new Combine(
-            *this, inputs[0], combine->combine_dim, combine->combine_degree);
+        new_op = new Combine(*this,
+                             inputs[0],
+                             combine->combine_dim,
+                             combine->combine_degree,
+                             combine->name);
         break;
       }
       case OP_REPARTITION: {
@@ -3723,7 +3784,8 @@ bool FFModel::convert_graph_to_operators(
         new_op = new Repartition(*this,
                                  inputs[0],
                                  repart->repartition_dim,
-                                 repart->repartition_degree);
+                                 repart->repartition_degree,
+                                 repart->name);
         break;
       }
       case OP_REPLICATE: {
@@ -3732,7 +3794,8 @@ bool FFModel::convert_graph_to_operators(
         new_op = new Replicate(*this,
                                inputs[0],
                                replicate->replicate_dim,
-                               replicate->replicate_degree);
+                               replicate->replicate_degree,
+                               replicate->name);
         break;
       }
       case OP_REDUCTION: {
@@ -3741,15 +3804,32 @@ bool FFModel::convert_graph_to_operators(
         new_op = new Reduction(*this,
                                inputs[0],
                                reduction->reduction_dim,
-                               reduction->reduction_degree);
+                               reduction->reduction_degree,
+                               reduction->name);
         break;
       }
       case OP_ALLREDUCE: {
         assert(inList.size() == 1);
         AllReduce *allreduce = (AllReduce *)node.ptr;
-        new_op = new AllReduce(*this, inputs[0], allreduce->allreduce_dim);
+        new_op = new AllReduce(
+            *this, inputs[0], allreduce->allreduce_dim, allreduce->name);
         break;
       }
+      case OP_PARALLEL_IDENTITY: {
+        assert(inList.size() == 1);
+        ParallelIdentity *parallel_identity = (ParallelIdentity *)node.ptr;
+        new_op = new ParallelIdentity(*this,
+                                      inputs[0],
+                                      parallel_identity->parallel_identity_dim,
+                                      parallel_identity->name);
+        break;
+      }
+      // case OP_ALLREDUCE: {
+      //   assert(inList.size() == 1);
+      //   AllReduce *allreduce = (AllReduce *)node.ptr;
+      //   new_op = new AllReduce(*this, inputs[0], allreduce->allreduce_dim);
+      //   break;
+      // }
       case OP_FUSED_PARALLEL: {
         assert(inList.size() == 1);
         FusedParallelOp *fused = (FusedParallelOp *)node.ptr;
@@ -3758,6 +3838,31 @@ bool FFModel::convert_graph_to_operators(
           parallel_ops.push_back(fused->parallel_ops[i]);
         }
         new_op = new FusedParallelOp(*this, inputs[0], parallel_ops);
+        break;
+      }
+      case OP_ADD_BIAS_RESIDUAL_LAYERNORM: {
+        assert(inList.size() == 2);
+        AddBiasResidualLayerNorm *abr_ln = (AddBiasResidualLayerNorm *)node.ptr;
+        AddBiasResidualLayerNormParams params = abr_ln->get_params();
+        new_op = new AddBiasResidualLayerNorm(*this,
+                                              abr_ln->layer_guid,
+                                              inputs[0],
+                                              inputs[1],
+                                              abr_ln->axes,
+                                              abr_ln->elementwise_affine,
+                                              abr_ln->use_bias,
+                                              abr_ln->eps,
+                                              abr_ln->inplace_residual,
+                                              true,
+                                              abr_ln->name);
+        break;
+      }
+      case OP_SIGMOID_SILU_MULTI: {
+        assert(inList.size() == 2);
+        SigmoidSiluMulti *ssm = (SigmoidSiluMulti *)node.ptr;
+        SigmoidSiluMultiParams params = ssm->get_params();
+        new_op = new SigmoidSiluMulti(
+            *this, ssm->layer_guid, inputs[0], inputs[1], ssm->name);
         break;
       }
       default: {

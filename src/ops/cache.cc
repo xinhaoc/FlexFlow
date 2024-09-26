@@ -165,9 +165,12 @@ OpMeta *Cache::init_task(Task const *task,
                          Runtime *runtime) {
   Cache *c = (Cache *)task->args;
   FFHandler handle = *((FFHandler const *)task->local_args);
-  CacheMeta *m = new CacheMeta(handle);
+  CacheMeta *m = new CacheMeta(handle, c);
   m->cache_score = 0.0f;
   m->profiling = c->profiling;
+  m->inference_debugging = c->inference_debugging;
+  std::strcpy(m->op_name, c->name);
+  m->layer_guid = c->layer_guid;
   return m;
 }
 

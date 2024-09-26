@@ -1,0 +1,11 @@
+[build-system]
+requires = [
+    "wheel",
+    "setuptools>=45",
+    "setuptools_scm[toml]>=6.0",
+    "cmake-build-extension",
+    "ninja",
+    "requests",
+    "pip",
+]
+build-backend = "setuptools.build_meta"

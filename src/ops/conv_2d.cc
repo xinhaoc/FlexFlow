@@ -389,7 +389,7 @@ Conv2D::Conv2D(FFModel &model,
              params.groups,
              params.use_bias,
              allocate_weights,
-             name) {}
+             params.name) {}
 
 bool Conv2DParams::is_valid(ParallelTensorShape const &input) const {
   ParallelTensorShape output_shape, kernel_shape, bias_shape;
@@ -588,12 +588,15 @@ OpMeta *Conv2D::init_task(Task const *task,
   //     regions[4], task->regions[4], FID_DATA, ctx, runtime,
   //     false/*readOutput*/);
 
-  Conv2DMeta *m = new Conv2DMeta(handle);
+  Conv2DMeta *m = new Conv2DMeta(handle, conv);
   m->relu = conv->activation == AC_MODE_RELU;
   m->use_bias = conv->use_bias;
   m->profiling = conv->profiling;
-  m->trainableInputs[0] = conv->trainableInputs[0];
+  m->inference_debugging = conv->inference_debugging;
+  m->trainable_inputs[0] = conv->trainable_inputs[0];
+  m->reset_input_grads[0] = conv->trainable_inputs[0];
   std::strcpy(m->op_name, conv->name);
+  m->layer_guid = conv->layer_guid;
 
   int input_w = acc_input.rect.hi[0] - acc_input.rect.lo[0] + 1;
   int input_h = acc_input.rect.hi[1] - acc_input.rect.lo[1] + 1;
@@ -751,7 +754,7 @@ void Conv2D::backward(FFModel const &ff) {
                                                     inputs[0]->region));
   launcher.add_field(rid++, FID_DATA);
   // regions[1](I/O): input_grad
-  if (trainableInputs[0]) {
+  if (trainable_inputs[0]) {
     launcher.add_region_requirement(RegionRequirement(inputs[0]->part_grad,
                                                       0 /*projection id*/,
                                                       READ_WRITE,
@@ -801,7 +804,7 @@ void Conv2D::backward(FFModel const &ff) {
 
 /*
   region(I): input
-  region(I/O): input_grad (if trainableInputs[0])
+  region(I/O): input_grad (if trainable_inputs[0])
   region(I): output
   region(I/O): output_grad
   region(I): filter
@@ -814,17 +817,17 @@ void Conv2D::backward_task(Task const *task,
                            Runtime *runtime) {
   // Conv2D* conv = (Conv2D*) task->args;
   Conv2DMeta const *m = *((Conv2DMeta **)task->local_args);
-  assert(regions.size() == (5 + static_cast<size_t>(m->trainableInputs[0]) +
+  assert(regions.size() == (5 + static_cast<size_t>(m->trainable_inputs[0]) +
                             static_cast<size_t>(m->use_bias)));
   assert(task->regions.size() ==
-         (5 + static_cast<size_t>(m->trainableInputs[0]) +
+         (5 + static_cast<size_t>(m->trainable_inputs[0]) +
           static_cast<size_t>(m->use_bias)));
   size_t rid = 0;
   TensorAccessorR<float, Conv2DInput::NUMDIM> acc_input(
       regions[rid], task->regions[rid], FID_DATA, ctx, runtime);
   rid++;
   float *acc_input_grad_ptr = NULL;
-  if (m->trainableInputs[0]) {
+  if (m->trainable_inputs[0]) {
     TensorAccessorW<float, Conv2DInput::NUMDIM> acc_input_grad(
         regions[rid],
         task->regions[rid],
@@ -1012,6 +1015,8 @@ bool Conv2D::estimate_sync_cost(Simulator *sim,
 
 void Conv2D::serialize(Legion::Serializer &sez) const {
   sez.serialize(this->layer_guid.id);
+  sez.serialize(this->layer_guid.transformer_layer_id);
+  sez.serialize(this->layer_guid.model_id);
   sez.serialize(this->out_channels);
   sez.serialize(this->kernel_h);
   sez.serialize(this->kernel_w);
@@ -1022,6 +1027,8 @@ void Conv2D::serialize(Legion::Serializer &sez) const {
   sez.serialize(this->groups);
   sez.serialize(this->use_bias);
   sez.serialize(this->activation);
+  sez.serialize(strlen(this->name));
+  sez.serialize(this->name, strlen(this->name));
 }
 
 using PCG::Node;
@@ -1036,9 +1043,11 @@ Node Conv2D::deserialize(FFModel &ff,
       padding_w, groups;
   bool use_bias;
   ActiMode activation;
-  size_t id;
+  size_t id, transformer_layer_id, deserialized_model_id;
   dez.deserialize(id);
-  LayerID layer_guid(id);
+  dez.deserialize(transformer_layer_id);
+  dez.deserialize(deserialized_model_id);
+  LayerID layer_guid(id, transformer_layer_id, deserialized_model_id);
   dez.deserialize(out_channels);
   dez.deserialize(kernel_h);
   dez.deserialize(kernel_w);
@@ -1049,6 +1058,10 @@ Node Conv2D::deserialize(FFModel &ff,
   dez.deserialize(groups);
   dez.deserialize(use_bias);
   dez.deserialize(activation);
+  size_t name_len;
+  char name[MAX_OPNAME] = {0};
+  dez.deserialize(name_len);
+  dez.deserialize(name, name_len);
 
   Conv2DParams params;
   params.layer_guid = layer_guid;
@@ -1062,6 +1075,7 @@ Node Conv2D::deserialize(FFModel &ff,
   params.groups = groups;
   params.use_bias = use_bias;
   params.activation = activation;
+  strcpy(params.name, name);
 
   return ff.get_or_create_node<Conv2D>(inputs[0], params);
 }
@@ -1106,7 +1120,7 @@ bool Conv2D::measure_operator_cost(Simulator *sim,
   int pad_h = ((output_h - 1) * stride_h + kernel_h - input_h + 1) / 2;
   int pad_w = ((output_w - 1) * stride_w + kernel_w - input_w + 1) / 2;
 
-  Conv2DMeta *m = sim->conv2d_meta;
+  Conv2DMeta *m = new Conv2DMeta(sim->handler, this);
   m->relu = activation == AC_MODE_RELU;
   // require input_c is divisible by groups
 

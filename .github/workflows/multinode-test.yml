@@ -25,6 +25,7 @@ jobs:
         run: |
           pip3 install pip --upgrade
           pip3 install pyopenssl --upgrade
+          pip3 install urllib3 --upgrade
           pip3 install pygithub
           python3 .github/workflows/helpers/gpu_ci_helper.py
 
@@ -37,7 +38,7 @@ jobs:
     # 10h timeout, instead of default of 360min (6h)
     timeout-minutes: 600
     container:
-      image: ghcr.io/flexflow/flexflow-environment-cuda-11.8:latest
+      image: ghcr.io/flexflow/flexflow-environment-cuda-12.0:latest
       options: --gpus all --shm-size=8192m
     steps:
       - name: Install updated git version
@@ -77,7 +78,7 @@ jobs:
           export OMPI_ALLOW_RUN_AS_ROOT=1
           export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
           export OMPI_MCA_btl_vader_single_copy_mechanism=none
-          ./tests/multi_gpu_tests.sh 2 2
+          ./tests/training_tests.sh 2 2
   
   multinode-gpu-test-ucx:
     name: Multinode GPU Test with UCX
@@ -86,7 +87,7 @@ jobs:
     runs-on: self-hosted
     needs: gpu-ci-concierge
     container:
-      image: ghcr.io/flexflow/flexflow-environment-cuda-11.8:latest
+      image: ghcr.io/flexflow/flexflow-environment-cuda-12.0:latest
       options: --gpus all --shm-size=8192m
     # 10h timeout, instead of default of 360min (6h)
     timeout-minutes: 600
@@ -128,7 +129,7 @@ jobs:
           export OMPI_ALLOW_RUN_AS_ROOT=1
           export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
           export OMPI_MCA_btl_vader_single_copy_mechanism=none
-          ./tests/multi_gpu_tests.sh 2 2
+          ./tests/training_tests.sh 2 2
   
   multinode-gpu-test-native-ucx:
     name: Multinode GPU Test with native UCX
@@ -137,7 +138,7 @@ jobs:
     runs-on: self-hosted
     needs: gpu-ci-concierge
     container:
-      image: ghcr.io/flexflow/flexflow-environment-cuda-11.8:latest
+      image: ghcr.io/flexflow/flexflow-environment-cuda-12.0:latest
       options: --gpus all --shm-size=8192m
     steps:
       - name: Install updated git version
@@ -176,7 +177,7 @@ jobs:
           export OMPI_ALLOW_RUN_AS_ROOT=1
           export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
           export OMPI_MCA_btl_vader_single_copy_mechanism=none
-          ./tests/multi_gpu_tests.sh 2 2
+          ./tests/training_tests.sh 2 2
 
   notify-slack:
     name: Notify Slack in case of failure

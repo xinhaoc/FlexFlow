@@ -3,6 +3,7 @@
 
 #include "flexflow/device.h"
 #include "flexflow/fftype.h"
+#include "flexflow/inference.h"
 #include "flexflow/layer.h"
 #include "flexflow/node.h"
 #include "flexflow/op_meta.h"
@@ -11,9 +12,11 @@
 
 namespace FlexFlow {
 
+class ElementUnary;
+
 class ElementUnaryMeta : public OpMeta {
 public:
-  ElementUnaryMeta(FFHandler handle);
+  ElementUnaryMeta(FFHandler handle, ElementUnary const *unary);
 #if defined(FF_USE_CUDA) || defined(FF_USE_HIP_CUDA)
   cudnnTensorDescriptor_t inputTensor, outputTensor;
   cudnnActivationDescriptor_t actiDesc;
@@ -25,7 +28,6 @@ public:
   DataType data_type;
   bool inplace;
   float scalar;
-  char op_name[MAX_OPNAME];
 };
 
 class ElementUnary : public Op {
@@ -45,8 +47,17 @@ public:
                Input const x,
                char const *name = nullptr);
   void init(FFModel const &) override;
+  void init_inference(FFModel const &,
+                      std::vector<ParallelTensor> const &,
+                      std::vector<ParallelTensor> const &,
+                      MachineView const *mv = nullptr) override;
   void forward(FFModel const &) override;
   void backward(FFModel const &) override;
+  Legion::FutureMap inference(FFModel const &,
+                              BatchConfigFuture const &,
+                              std::vector<ParallelTensor> const &,
+                              std::vector<ParallelTensor> const &,
+                              MachineView const *mv = nullptr) override;
   void print_layer(FFModel const &model) override {
     assert(0);
   }
@@ -67,6 +78,10 @@ public:
                            std::vector<Legion::PhysicalRegion> const &regions,
                            Legion::Context ctx,
                            Legion::Runtime *runtime);
+  static void inference_task(Legion::Task const *task,
+                             std::vector<Legion::PhysicalRegion> const &regions,
+                             Legion::Context ctx,
+                             Legion::Runtime *runtime);
   static void backward_task(Legion::Task const *task,
                             std::vector<Legion::PhysicalRegion> const &regions,
                             Legion::Context ctx,
