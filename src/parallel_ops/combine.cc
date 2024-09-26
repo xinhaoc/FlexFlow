@@ -76,7 +76,7 @@ Combine::Combine(FFModel &model,
               params.name) {}
 
 Combine::Combine(FFModel &model,
-                 const ParallelTensor _input,
+                 ParallelTensor const _input,
                  int _combine_legion_dim,
                  int _combine_degree,
                  char const *name)
@@ -272,6 +272,7 @@ void Combine::forward(FFModel const &ff) {
   assert(numInputs == 1);
   assert(inputs[0]->data_type == outputs[0]->data_type);
   DataType data_type = inputs[0]->data_type;
+  set_argumentmap_for_forward(ff, argmap);
   IndexLauncher launcher(COMBINE_FWD_TASK_ID,
                          outputs[0]->parallel_is,
                          TaskArgument(nullptr, 0),

@@ -64,7 +64,7 @@ ReductionParams Reduction::get_params() const {
 }
 
 Reduction::Reduction(FFModel &model,
-                     const ParallelTensor _input,
+                     ParallelTensor const _input,
                      int _reduction_legion_dim,
                      int _reduction_degree,
                      char const *name)

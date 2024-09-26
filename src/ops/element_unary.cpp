@@ -54,7 +54,7 @@ void ElementUnary::init_kernel(ElementUnaryMeta *m,
 
 template <typename T>
 __global__ void elewise_unary_forward_kernel(
-    coord_t volume, const T scalar, OperatorType type, T const *in, T *out) {
+    coord_t volume, T const scalar, OperatorType type, T const *in, T *out) {
   CUDA_KERNEL_LOOP(i, volume) {
     switch (type) {
       case OP_EXP: {
@@ -156,7 +156,7 @@ void ElementUnary::forward_kernel_wrapper(ElementUnaryMeta const *m,
 
 template <typename T>
 __global__ void elewise_unary_backward_kernel(coord_t volume,
-                                              const T scalar,
+                                              T const scalar,
                                               OperatorType type,
                                               T const *output,
                                               T const *output_grad,

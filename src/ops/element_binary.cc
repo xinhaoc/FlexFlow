@@ -24,7 +24,7 @@ using Legion::TaskLauncher;
 
 using namespace FlexFlow::Kernels::ElementBinary;
 
-bool broadcastable(const Tensor t1, const Tensor t2) {
+bool broadcastable(Tensor const t1, Tensor const t2) {
   int dim = std::min(t1->num_dims, t2->num_dims);
   for (int i = 0; i < dim; i++) {
     if ((t1->dims[i] != t2->dims[i]) && (t1->dims[i] > 1) &&
@@ -36,8 +36,8 @@ bool broadcastable(const Tensor t1, const Tensor t2) {
 }
 
 Tensor FFModel::binary(OperatorType op,
-                       const Tensor in1,
-                       const Tensor in2,
+                       Tensor const in1,
+                       Tensor const in2,
                        bool inplace_a,
                        char const *name) {
   Layer *ele = nullptr;
@@ -125,43 +125,43 @@ Op *ElementBinary::create_operator_from_layer(
                            layer->name);
 }
 
-Tensor FFModel::add(const Tensor in1,
-                    const Tensor in2,
+Tensor FFModel::add(Tensor const in1,
+                    Tensor const in2,
                     bool inplace_a,
                     char const *name) {
   return this->binary(OP_EW_ADD, in1, in2, inplace_a, name);
 }
 
-Tensor FFModel::subtract(const Tensor in1,
-                         const Tensor in2,
+Tensor FFModel::subtract(Tensor const in1,
+                         Tensor const in2,
                          bool inplace_a,
                          char const *name) {
   return this->binary(OP_EW_SUB, in1, in2, inplace_a, name);
 }
 
-Tensor FFModel::multiply(const Tensor in1,
-                         const Tensor in2,
+Tensor FFModel::multiply(Tensor const in1,
+                         Tensor const in2,
                          bool inplace_a,
                          char const *name) {
   return this->binary(OP_EW_MUL, in1, in2, inplace_a, name);
 }
 
-Tensor FFModel::divide(const Tensor in1,
-                       const Tensor in2,
+Tensor FFModel::divide(Tensor const in1,
+                       Tensor const in2,
                        bool inplace_a,
                        char const *name) {
   return this->binary(OP_EW_DIV, in1, in2, inplace_a, name);
 }
 
-Tensor FFModel::max(const Tensor in1,
-                    const Tensor in2,
+Tensor FFModel::max(Tensor const in1,
+                    Tensor const in2,
                     bool inplace_a,
                     char const *name) {
   return this->binary(OP_EW_MAX, in1, in2, inplace_a, name);
 }
 
-Tensor FFModel::min(const Tensor in1,
-                    const Tensor in2,
+Tensor FFModel::min(Tensor const in1,
+                    Tensor const in2,
                     bool inplace_a,
                     char const *name) {
   return this->binary(OP_EW_MIN, in1, in2, inplace_a, name);
@@ -197,8 +197,8 @@ bool operator==(ElementBinaryParams const &lhs,
 ElementBinary::ElementBinary(FFModel &model,
                              LayerID const &_layer_guid,
                              OperatorType _op_type,
-                             const ParallelTensor in1,
-                             const ParallelTensor in2,
+                             ParallelTensor const in1,
+                             ParallelTensor const in2,
                              bool _inplace_a,
                              char const *name)
     : Op(model,
@@ -239,6 +239,8 @@ ElementBinary::ElementBinary(FFModel &model,
       numdim, dims, in1->data_type, this);
   broadcast_input1 = (inputs[0]->get_volume() != outputs[0]->get_volume());
   broadcast_input2 = (inputs[1]->get_volume() != outputs[0]->get_volume());
+
+  batch_size = dims[numdim - 2].size;
 }
 
 ElementBinary::ElementBinary(
@@ -438,6 +440,8 @@ OpMeta *ElementBinary::init_task(Task const *task,
   m->has_same_operands = eb->has_same_operands;
   m->broadcast_input1 = eb->broadcast_input1;
   m->broadcast_input2 = eb->broadcast_input2;
+  m->batch_size = eb->batch_size;
+
   std::strcpy(m->op_name, eb->name);
   m->layer_guid = eb->layer_guid;
   Domain input1_domain = runtime->get_index_space_domain(
@@ -470,6 +474,10 @@ OpMeta *ElementBinary::init_task(Task const *task,
   } else {
     output_domain = input1_domain;
   }
+  m->replicate_size = m->broadcast_input1
+                          ? (input1_domain.get_volume() / m->batch_size)
+                          : (input2_domain.get_volume() / m->batch_size);
+
   assert(task->regions.size() == regions.size());
   assert(regions.size() == num_regions);
   init_kernel(m, input1_domain, input2_domain, output_domain);
@@ -483,7 +491,7 @@ void ElementBinary::forward(FFModel const &ff) {
   set_argumentmap_for_forward(ff, argmap);
   IndexLauncher launcher(ELEMENTBINARY_FWD_TASK_ID,
                          parallel_is,
-                         TaskArgument(NULL, 0),
+                         TaskArgument(this, sizeof(ElementBinary)),
                          argmap,
                          Predicate::TRUE_PRED,
                          false /*must*/,
@@ -740,7 +748,7 @@ __host__ void
                                 std::vector<PhysicalRegion> const &regions,
                                 Context ctx,
                                 Runtime *runtime) {
-  // const ElementBinary* ele = (const ElementBinary*) task->args;
+  ElementBinary const *ele = (ElementBinary const *)task->args;
   ElementBinaryMeta const *m = *((ElementBinaryMeta **)task->local_args);
   GenericTensorAccessorR in1, in2;
   GenericTensorAccessorW out;
@@ -1121,6 +1129,28 @@ bool ElementBinary::measure_operator_cost(Simulator *sim,
   delete m;
   return true;
 }
+// void ElementBinary::serialize(Legion::Serializer &sez) const {
+//   sez.serialize(this->op_type);
+//   sez.serialize(this->inplace_a);
+// }
+
+using PCG::Node;
+/*static*/
+// Node ElementBinary::deserialize(FFModel &ff,
+//                                 Legion::Deserializer &dez,
+//                                 ParallelTensor inputs[],
+//                                 int num_inputs) {
+//   assert(num_inputs == 2);
+//   OperatorType op_type;
+//   bool inplace_a;
+//   dez.deserialize(op_type);
+//   dez.deserialize(inplace_a);
+//   ElementBinaryParams params;
+//   params.type = op_type;
+//   params.inplace_a = inplace_a;
+//   return ff.get_or_create_node<ElementBinary>({inputs[0], inputs[1]},
+//   params);
+// }
 
 void ElementBinary::serialize(Legion::Serializer &sez) const {
   sez.serialize(this->layer_guid.id);

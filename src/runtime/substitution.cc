@@ -58,7 +58,7 @@ using namespace Legion;
 Legion::Logger log_xfers("xfers");
 Legion::Logger log_xfer_matches("xfer_matches");
 
-const TensorX TensorX::NO_TX = TensorX();
+TensorX const TensorX::NO_TX = TensorX();
 
 bool TensorX::operator==(TensorX const &other) const {
   return this->op == other.op && this->idx == other.idx;
@@ -156,7 +156,7 @@ tl::optional<ParallelTensor> TensorX::to_tensor(GraphXfer const *xfer) const {
   }
 }
 
-OpX::OpX(const OperatorType _type,
+OpX::OpX(OperatorType const _type,
          int num_inputs,
          int num_outputs,
          TensorX const &input0,
@@ -178,7 +178,7 @@ OpX::OpX(const OperatorType _type,
   }
 }
 
-OpX::OpX(const OperatorType _type,
+OpX::OpX(OperatorType const _type,
          int num_inputs,
          int num_outputs,
          TensorX const *input_array)
@@ -614,8 +614,9 @@ void GraphXfer::run(
     SimplificationSettings const &simplification_settings,
     int &num_matches_found,
     int &num_matches_rejected) {
-  // printf("run: depth(%d) srcOps.size(%zu) graph.size(%zu) candidates(%zu)\n",
-  // depth, srcOps.size(), graph->inEdges.size(), candidates.size());
+  // printf("run: depth(%d) srcOps.size(%zu) graph.size(%zu)
+  // candidates(%zu)\n", depth, srcOps.size(), graph->inEdges.size(),
+  // candidates.size());
   if (depth >= (int)srcOps.size()) {
     // Create dst operators
     bool pass = true;
@@ -1215,6 +1216,7 @@ void Graph::export_strategy_computation_graph(
   for (auto const &node : s.get_nodes(*this)) {
     // Add node
     if (strategy.find(node) == strategy.end()) {
+      dot.add_node(node, {{"label", node.to_string()}});
       // Check FusedParallel node here and print out the detailed information
       if (node.ptr->op_type == OperatorType::OP_FUSED_PARALLEL) {
         RecordFormatter rf;
@@ -1925,6 +1927,7 @@ void GraphSearchHelper::graph_optimize(
   this->logger->debug() << "Starting graph optimization";
 
   Graph *graph = this->construct_graph();
+  graph->print_dot();
   graph->duplicate_input_nodes();
   std::unordered_map<Node, MachineView> empty_strategy;
   if (!this->config.export_strategy_computation_graph_file.empty()) {
@@ -1991,8 +1994,8 @@ void GraphSearchHelper::graph_optimize_with_memory(
   Graph *graph = this->construct_graph();
 
   // The input nodes may need to be duplicated because the PCG was constructed
-  // to have one input node for one input, but the actual execution graph should
-  // have the distributed version of inputs (i.e. multiple nodes).
+  // to have one input node for one input, but the actual execution graph
+  // should have the distributed version of inputs (i.e. multiple nodes).
   graph->duplicate_input_nodes();
 
   // Export an empty schedule if needed.
@@ -2278,7 +2281,8 @@ std::unique_ptr<Graph> GraphSearchHelper::base_optimize(
   int budget = model->config.search_budget;
   if (budget == 0) {
     log_xfers.warning()
-        << "Base search budget is set to 0. This is probably not what you want "
+        << "Base search budget is set to 0. This is probably not what you "
+           "want "
            "(use the --budget flag to set the base search budget)";
   }
   for (int iter = 0; iter < budget || budget == -1; iter++) {
@@ -2375,7 +2379,8 @@ std::unique_ptr<Graph> GraphSearchHelper::base_optimize_with_memory(
   int budget = model->config.search_budget;
   if (budget == 0) {
     log_xfers.warning()
-        << "Base search budget is set to 0. This is probably not what you want "
+        << "Base search budget is set to 0. This is probably not what you "
+           "want "
            "(use the --budget flag to set the base search budget)";
   }
 
@@ -2547,8 +2552,8 @@ void GraphSearchHelper::try_cache_result<GraphOptimizeResultWithMemory>(
 /**
  * @brief Get the cost/result of PCG if sequentially split it.
  *
- * @details This function is to combine the search results from DP sub-problems.
- * The sub-problems are solved by generic_sequence_optimize().
+ * @details This function is to combine the search results from DP
+ * sub-problems. The sub-problems are solved by generic_sequence_optimize().
  */
 template <typename T>
 T GraphSearchHelper::execute_sequence_split(
@@ -2727,8 +2732,8 @@ T GraphSearchHelper::generic_sequence_optimize(
             // this->generic_sequence_optimize<float>(post_graph.get(),
             // sink_node, output_shape, bottleneck_output_shape);
             // this->logger->debug() << "Cost of post_graph (" <<
-            // bottleneck_output_shape << "): " << post_cost; float current_cost
-            // = pre_cost + post_cost;
+            // bottleneck_output_shape << "): " << post_cost; float
+            // current_cost = pre_cost + post_cost;
             current_cost =
                 this->execute_sequence_split<float>(pre_graph,
                                                     post_graph,
@@ -2790,10 +2795,10 @@ T GraphSearchHelper::generic_sequence_optimize_with_memory(
     tl::optional<ParallelTensorShape> const &input_shape) {
   TAG_ENTER(this->logger);
 
-  // Try to find the result from cache first. But this will only get the cached
-  // result if the returned type is float. The float number means the best run
-  // time cost with only machine quantity (without distinguishing machine
-  // identities).
+  // Try to find the result from cache first. But this will only get the
+  // cached result if the returned type is float. The float number means the
+  // best run time cost with only machine quantity (without distinguishing
+  // machine identities).
   size_t hash = gs_dp_state_hash(graph, sink_node, output_shape, input_shape);
   tl::optional<T> cached = this->try_get_cost_from_cache<T>(hash);
   if (cached.has_value()) {
@@ -3623,6 +3628,7 @@ void FFModel::graph_optimize(
     this->graph_search->graph_optimize(
         budget, only_data_parallel, best_graph, optimal_views);
   }
+  best_graph->print_dot();
 }
 
 bool FFModel::convert_graph_to_operators(
@@ -3754,8 +3760,12 @@ bool FFModel::convert_graph_to_operators(
       case OP_SOFTMAX: {
         assert(inList.size() == 1);
         Softmax *softmax = (Softmax *)node.ptr;
-        new_op = new Softmax(
-            *this, softmax->layer_guid, inputs[0], softmax->dim, softmax->name);
+        new_op = new Softmax(*this,
+                             softmax->layer_guid,
+                             inputs[0],
+                             softmax->dim,
+                             softmax->last_layer,
+                             softmax->name);
         break;
       }
       case OP_COMBINE: {
@@ -3814,6 +3824,12 @@ bool FFModel::convert_graph_to_operators(
                                       parallel_identity->name);
         break;
       }
+      // case OP_ALLREDUCE: {
+      //   assert(inList.size() == 1);
+      //   AllReduce *allreduce = (AllReduce *)node.ptr;
+      //   new_op = new AllReduce(*this, inputs[0], allreduce->allreduce_dim);
+      //   break;
+      // }
       case OP_FUSED_PARALLEL: {
         assert(inList.size() == 1);
         FusedParallelOp *fused = (FusedParallelOp *)node.ptr;

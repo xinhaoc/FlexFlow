@@ -63,7 +63,7 @@ AllReduceParams AllReduce::get_params() const {
 }
 
 AllReduce::AllReduce(FFModel &model,
-                     const ParallelTensor _input,
+                     ParallelTensor const _input,
                      int _allreduce_legion_dim,
                      char const *name)
     : ParallelOp(model, OP_ALLREDUCE, name, _input),
@@ -202,6 +202,7 @@ void AllReduce::backward(FFModel const &ff) {
   ArgumentMap argmap;
   Context ctx = ff.config.lg_ctx;
   Runtime *runtime = ff.config.lg_hlr;
+  set_argumentmap_for_backward(ff, argmap);
   assert(numOutputs == 1);
   assert(numInputs == 1);
   IndexLauncher launcher(ALLREDUCE_BWD_TASK_ID,
@@ -342,6 +343,7 @@ void AllReduce::inference_task(Task const *task,
       m->output_type[0], regions[1], task->regions[1], FID_DATA, ctx, runtime);
 
   assert(input.data_type == output.data_type);
+
   inference_kernel_wrapper(m, bc, input, output);
   if (m->inference_debugging) {
     assert(task->index_point.get_dim() == 1);
@@ -412,6 +414,7 @@ void AllReduce::peft_bwd_task(Task const *task,
       m->output_type[0], regions[1], task->regions[1], FID_DATA, ctx, runtime);
 
   assert(input_grad.data_type == output_grad.data_type);
+
   peft_bwd_kernel_wrapper(m, bc, input_grad, output_grad);
   if (m->inference_debugging) {
     assert(task->index_point.get_dim() == 1);

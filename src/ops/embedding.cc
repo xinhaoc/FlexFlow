@@ -39,7 +39,7 @@ using Legion::TaskLauncher;
 
 using namespace FlexFlow::Kernels::Embedding;
 
-Tensor FFModel::embedding(const Tensor input,
+Tensor FFModel::embedding(Tensor const input,
                           int num_entries,
                           int out_dim,
                           AggrMode aggr,
@@ -247,7 +247,7 @@ Embedding::Embedding(FFModel &model,
 
 Embedding::Embedding(FFModel &model,
                      Embedding const &other,
-                     const ParallelTensor input,
+                     ParallelTensor const input,
                      bool allocate_weights)
     : Embedding(model,
                 other.layer_guid,
@@ -261,7 +261,7 @@ Embedding::Embedding(FFModel &model,
 
 Embedding::Embedding(FFModel &model,
                      LayerID const &_layer_guid,
-                     const ParallelTensor _input,
+                     ParallelTensor const _input,
                      int _num_entries,
                      int _out_channels,
                      AggrMode _aggr,
@@ -313,7 +313,6 @@ Embedding::Embedding(FFModel &model,
 
   outputs[0] = model.create_parallel_tensor_legion_ordering(
       output_ndim, output_dims, dtype, this);
-
   assert(check_output_input_weight_parallel_dims(allocate_weights));
 }
 
@@ -940,7 +939,7 @@ void EmbeddingLookup_int64_t_float_float__avx2_fma(int const block_size,
                                                    bool normalize_by_lengths,
                                                    float *out) {
 #ifdef FF_USE_AVX2
-  const int64_t prefdist_T0 = 16;
+  int64_t const prefdist_T0 = 16;
   if (block_size == 128) {
     // unrolling 16 times
     int64_t dataInd = 0;
@@ -964,17 +963,17 @@ void EmbeddingLookup_int64_t_float_float__avx2_fma(int const block_size,
       __m256 vop120 = _mm256_setzero_ps();
       for (int64_t start = dataInd; dataInd < start + lengths[rangeIndex];
            ++dataInd) {
-        const int64_t idx = indices[dataInd];
+        int64_t const idx = indices[dataInd];
         float wgt = 1.f;
         if (weight) {
           wgt = weight[dataInd];
         }
         __m256 vwgt = _mm256_set1_ps(wgt);
         float const *ip = &input[idx * block_size];
-        const int64_t next_T0 = (dataInd < index_size - prefdist_T0)
+        int64_t const next_T0 = (dataInd < index_size - prefdist_T0)
                                     ? (dataInd + prefdist_T0)
                                     : dataInd;
-        const int64_t idx_pref_T0 = indices[next_T0];
+        int64_t const idx_pref_T0 = indices[next_T0];
         assert(idx >= 0 && idx_pref_T0 >= 0 && idx < data_size &&
                idx_pref_T0 < data_size);
         float const *ip_next_T0 = &input[idx_pref_T0 * block_size];
@@ -1050,10 +1049,10 @@ void EmbeddingLookup_int64_t_float_float__avx2_fma(int const block_size,
     }
     __m256 vwgt = _mm256_set1_ps(wgt);
     float const *ip = &input[idx * block_size];
-    const int64_t next_T0 = (dataInd < index_size - prefdist_T0)
+    int64_t const next_T0 = (dataInd < index_size - prefdist_T0)
                                 ? (dataInd + prefdist_T0)
                                 : dataInd;
-    const int64_t idx_pref_T0 = indices[next_T0];
+    int64_t const idx_pref_T0 = indices[next_T0];
     assert(idx >= 0 && idx_pref_T0 >= 0 && idx < data_size &&
            idx_pref_T0 < data_size);
     float const *ip_next_T0 = &input[idx_pref_T0 * block_size];
@@ -1094,17 +1093,17 @@ else {
     }
     for (int64_t start = dataInd; dataInd < start + lengths[rangeIndex];
          ++dataInd) {
-      const int64_t idx = indices[dataInd];
+      int64_t const idx = indices[dataInd];
       float wgt = 1.f;
       if (weight) {
         wgt = weight[dataInd];
       }
       __m256 vwgt = _mm256_set1_ps(wgt);
       float const *ip = &input[idx * block_size];
-      const int64_t next_T0 = (dataInd < index_size - prefdist_T0)
+      int64_t const next_T0 = (dataInd < index_size - prefdist_T0)
                                   ? (dataInd + prefdist_T0)
                                   : dataInd;
-      const int64_t idx_pref_T0 = indices[next_T0];
+      int64_t const idx_pref_T0 = indices[next_T0];
       assert(idx >= 0 && idx_pref_T0 >= 0 && idx < data_size &&
              idx_pref_T0 < data_size);
       float const *ip_next_T0 = &input[idx_pref_T0 * block_size];

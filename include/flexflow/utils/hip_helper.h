@@ -23,7 +23,7 @@
   do {                                                                         \
     std::stringstream _error;                                                  \
     if (status != miopenStatusSuccess) {                                       \
-      _error << "CUDNN failure: " << status;                                   \
+      _error << "CUDNN failure: " << miopenGetErrorString(status);             \
       FatalError(_error.str());                                                \
     }                                                                          \
   } while (0)
@@ -85,6 +85,12 @@ __global__ void assign_kernel(DT *ptr, Legion::coord_t size, DT value);
 
 template <typename DT>
 __global__ void copy_kernel(DT *dst, const DT *src, Legion::coord_t size);
+
+template <typename DT>
+__global__ void copy_kernel_with_replicate(DT *dst,
+                                           const DT *src,
+                                           Legion::coord_t origin_size,
+                                           Legion::coord_t size);
 
 template <typename DT>
 __global__ void copy_kernel_discrete(DT *dst,
@@ -173,6 +179,10 @@ miopenStatus_t
     cudnnSetTensorDescriptorFromDomain4SoftMax(miopenTensorDescriptor_t tensor,
                                                Legion::Domain domain,
                                                DataType data_type = DT_FLOAT);
+
+miopenStatus_t
+    cudnnSetTensorDescriptorFromDomain4SoftMax(miopenTensorDescriptor_t tensor,
+                                               Legion::Domain domain);
 
 hipblasDatatype_t ff_to_cuda_datatype(DataType type);
 

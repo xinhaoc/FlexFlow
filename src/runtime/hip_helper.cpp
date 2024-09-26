@@ -57,6 +57,16 @@ __global__ void copy_kernel(DT *dst, const DT *src, coord_t size) {
 }
 
 template <typename DT>
+__global__ void copy_kernel_with_replicate(DT *dst,
+                                           const DT *src,
+                                           coord_t origin_size,
+                                           coord_t size) {
+  CUDA_KERNEL_LOOP(i, size) {
+    dst[i] = src[i % origin_size];
+  }
+}
+
+template <typename DT>
 __global__ void
     copy_kernel_discrete(DT *dst, const DT *src, coord_t size, size_t *index) {
   CUDA_KERNEL_LOOP(i, size) {
@@ -551,6 +561,57 @@ miopenStatus_t cudnnSetTensorDescriptorFromDomain4SoftMax(
   return miopenStatusBadParm;
 }
 
+miopenStatus_t
+    cudnnSetTensorDescriptorFromDomain4SoftMax(miopenTensorDescriptor_t tensor,
+                                               Domain domain) {
+  int dims[MAX_TENSOR_DIM];
+  switch (domain.get_dim()) {
+    case 1: {
+      Rect<1> rect = domain;
+      dims[0] = rect.hi[0] - rect.lo[0] + 1;
+      return miopenSet4dTensorDescriptor(tensor, miopenFloat, dims[0], 1, 1, 1);
+    }
+    case 2: {
+      Rect<2> rect = domain;
+      dims[0] = rect.hi[0] - rect.lo[0] + 1;
+      dims[1] = rect.hi[1] - rect.lo[1] + 1;
+      return miopenSet4dTensorDescriptor(
+          tensor, miopenFloat, dims[1], dims[0], 1, 1);
+    }
+    case 3: {
+      Rect<3> rect = domain;
+      dims[0] = rect.hi[0] - rect.lo[0] + 1;
+      dims[1] = rect.hi[1] - rect.lo[1] + 1;
+      dims[2] = rect.hi[2] - rect.lo[2] + 1;
+      return miopenSet4dTensorDescriptor(
+          tensor, miopenFloat, dims[2] * dims[1], dims[0], 1, 1);
+    }
+    case 4: {
+      Rect<4> rect = domain;
+      dims[0] = rect.hi[0] - rect.lo[0] + 1;
+      dims[1] = rect.hi[1] - rect.lo[1] + 1;
+      dims[2] = rect.hi[2] - rect.lo[2] + 1;
+      dims[3] = rect.hi[3] - rect.lo[3] + 1;
+      return miopenSet4dTensorDescriptor(
+          tensor, miopenFloat, dims[3] * dims[2] * dims[1], dims[0], 1, 1);
+    }
+    case 5: {
+      Rect<5> rect = domain;
+      int leading_dim_size = rect.hi[4] - rect.lo[4] + 1;
+      assert(leading_dim_size == 1);
+      dims[0] = rect.hi[0] - rect.lo[0] + 1;
+      dims[1] = rect.hi[1] - rect.lo[1] + 1;
+      dims[2] = rect.hi[2] - rect.lo[2] + 1;
+      dims[3] = rect.hi[3] - rect.lo[3] + 1;
+      return miopenSet4dTensorDescriptor(
+          tensor, miopenFloat, dims[3], dims[2], dims[1], dims[0]);
+    }
+    default:
+      assert(false && "Unsupported dim number");
+  }
+  return miopenStatusBadParm;
+}
+
 miopenDataType_t ff_to_cudnn_datatype(DataType type) {
   switch (type) {
     case DT_HALF:
@@ -680,6 +741,16 @@ template __global__ void
     copy_kernel<half>(half *dst, half const *src, coord_t size);
 template __global__ void
     copy_kernel<float>(float *dst, float const *src, coord_t size);
+
+template __global__ void copy_kernel_with_replicate<float>(float *dst,
+                                                           float const *src,
+                                                           coord_t origin_size,
+                                                           coord_t size);
+template __global__ void copy_kernel_with_replicate<int32_t>(
+    int32_t *dst, int32_t const *src, coord_t origin_size, coord_t size);
+template __global__ void copy_kernel_with_replicate<int64_t>(
+    int64_t *dst, int64_t const *src, coord_t origin_size, coord_t size);
+
 template __global__ void
     copy_kernel<double>(double *dst, double const *src, coord_t size);
 template __global__ void

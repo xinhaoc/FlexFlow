@@ -39,7 +39,7 @@ from flexflow.type import (
 from flexflow.config import *
 from .flexflowlib import ffi, flexflow_library
 from typing import Union, List
-from peft import LoraConfig
+# from peft import LoraConfig
 import json
 
 
@@ -1193,7 +1193,6 @@ class Tensor(object):
 # Parameter
 # -----------------------------------------------------------------------
 
-
 class Parameter(Tensor):
     __slots__ = ["parameter_handle"]
 
@@ -1880,14 +1879,14 @@ class LoraLinearConfig(object):
         config_dict["optimizer_type"] = OptimizerType.OPTIMIZER_TYPE_SGD
         return LoraLinearConfig(**config_dict)
 
-    def to_hf_config(self) -> LoraConfig:
-        return LoraConfig(
-            base_model_name_or_path=self.base_model_name_or_path,
-            r=self.rank,
-            target_modules=self.target_modules,
-            lora_alpha=self.lora_alpha,
-            lora_dropout=self.lora_dropout,
-        )
+    # def to_hf_config(self) -> LoraConfig:
+    #     return LoraConfig(
+    #         base_model_name_or_path=self.base_model_name_or_path,
+    #         r=self.rank,
+    #         target_modules=self.target_modules,
+    #         lora_alpha=self.lora_alpha,
+    #         lora_dropout=self.lora_dropout,
+    #     )
 
     @property
     def cache_folder(self):
@@ -3095,7 +3094,7 @@ class FFModel(object):
         self.add_layer(OpType.FLAT, name)
         return Tensor(handle, owner_op_type=OpType.FLAT)
 
-    def softmax(self, input, axis=-1, name=None):
+    def softmax(self, input, axis=-1, last_layer=False, name=None):
         """Softmax activation function.
 
         :param input: the input Tensor.
@@ -3108,7 +3107,7 @@ class FFModel(object):
         """
         c_name = get_c_name(name)
         handle = ffc().flexflow_model_add_softmax(
-            self.handle, input.handle, axis, c_name
+            self.handle, input.handle, axis, last_layer, c_name
         )
         self.add_layer(OpType.SOFTMAX, name)
         return Tensor(handle, owner_op_type=OpType.SOFTMAX)
@@ -4344,6 +4343,13 @@ class FFModel(object):
         :returns:  None -- no returns.
         """
         ffc().flexflow_model_update(self.handle)
+    
+    def unified_update(self):
+        """Update weights and biases of all layers.
+                
+        :returns:  None -- no returns.
+        """
+        ffc.flexflow_model_unified_update(self.handle)
 
     def compile(self, optimizer=None, loss_type=None, metrics=None, comp_mode=None):
         """Configure the model for trainting. FlexFlow uses lazy initialization,
@@ -4386,6 +4392,26 @@ class FFModel(object):
         for ff_tensor, np_tensor in self.attr_tensors.items():
             ff_tensor.set_tensor(self, np_tensor)
         print("Compiled ffmodel!")
+    
+    def load_bert_pretrained(self, checkpoint=None):
+      # store weights in dict
+      weights_dict = {}
+      for name, params in checkpoint.named_parameters():
+           weights_dict[name.replace("LayerNorm", "layer_norm").replace(".", "_")] = params.detach().cpu().numpy()
+           print(name.replace("LayerNorm", "layer_norm").replace(".", "_")) 
+      # some weights not in params
+      weights_dict['cls_predictions_decoder_weight'] = checkpoint.cls.predictions.decoder.weight.detach().cpu().numpy()
+      weights_dict['cls_predictions_decoder_bias'] = checkpoint.cls.predictions.decoder.bias.detach().cpu().numpy()
+      for i in range (self._nb_layers):
+          layer = self._layers[i]
+          if (layer.name + "_weight") in weights_dict:
+                print('weight: ' + layer.name)
+                weight = layer.get_parameter_by_id(0)
+                weight.set_tensor(self, weights_dict[layer.name + "_weight"])
+          if (layer.name + "_bias") in weights_dict:
+                print('bias: ' + layer.name)
+                bias = layer.get_parameter_by_id(1)
+                bias.set_tensor(self, weights_dict[layer.name + "_bias"])
 
     def fit(self, x=None, y=None, batch_size=None, epochs=1):
         """Trains the model for a fixed number of epochs (iterations on a dataset).
@@ -4420,13 +4446,13 @@ class FFModel(object):
             for d in dataloaders:
                 d.reset()
             self.reset_metrics()
-            iterations = num_samples / batch_size
+            iterations = 1
             for iter in range(0, int(iterations)):
                 self._ffconfig.begin_trace(self._tracing_id)
                 for d in dataloaders:
                     d.next_batch(self)
                 self.forward()
-                self.zero_gradients()
+                # self.zero_gradients()
                 self.backward()
                 self.update()
                 self._ffconfig.end_trace(self._tracing_id)

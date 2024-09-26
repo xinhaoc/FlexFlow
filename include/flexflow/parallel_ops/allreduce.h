@@ -16,7 +16,7 @@ public:
   using Input = ParallelTensor;
 
   AllReduce(FFModel &model,
-            const ParallelTensor input,
+            ParallelTensor const input,
             int allreduce_legion_dim,
             char const *name = NULL);
   AllReduce(FFModel &model,
@@ -60,6 +60,7 @@ public:
                             std::vector<Legion::PhysicalRegion> const &regions,
                             Legion::Context ctx,
                             Legion::Runtime *runtime);
+
   static void inference_task(Legion::Task const *task,
                              std::vector<Legion::PhysicalRegion> const &regions,
                              Legion::Context ctx,

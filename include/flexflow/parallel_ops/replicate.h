@@ -18,7 +18,7 @@ public:
   using Input = ParallelTensor;
 
   Replicate(FFModel &model,
-            const ParallelTensor input,
+            ParallelTensor const input,
             int replicate_legion_dim,
             int replicate_degree,
             char const *name = NULL);
@@ -46,6 +46,12 @@ public:
   bool get_int_parameter(PMParameter, int *) const override;
   bool append_parallel_op_info(
       std::vector<ParallelOpInfo> &parallel_ops) const override;
+  // <<<<<<< HEAD
+  //   static void init_task(Legion::Task const *task,
+  //                         std::vector<Legion::PhysicalRegion> const &regions,
+  //                         Legion::Context ctx,
+  //                         Legion::Runtime *runtime);
+  // =======
   static OpMeta *init_task(Legion::Task const *task,
                            std::vector<Legion::PhysicalRegion> const &regions,
                            Legion::Context ctx,
@@ -63,6 +69,21 @@ public:
                             std::vector<Legion::PhysicalRegion> const &regions,
                             Legion::Context ctx,
                             Legion::Runtime *runtime);
+
+  template <typename T>
+  static void
+      forward_task_with_type(Legion::Task const *task,
+                             std::vector<Legion::PhysicalRegion> const &regions,
+                             Legion::Context ctx,
+                             Legion::Runtime *runtime);
+
+  template <typename T>
+  static void backward_task_with_type(
+      Legion::Task const *task,
+      std::vector<Legion::PhysicalRegion> const &regions,
+      Legion::Context ctx,
+      Legion::Runtime *runtime);
+
   static void peft_bwd_task(Legion::Task const *task,
                             std::vector<Legion::PhysicalRegion> const &regions,
                             Legion::Context ctx,

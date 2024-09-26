@@ -91,9 +91,9 @@ struct NodeCompare {
 
 struct GraphOptimalViewSerialized {
 #ifdef LEGION_MAX_RETURN_SIZE
-  static const size_t buffer_size = LEGION_MAX_RETURN_SIZE - 8;
+  static size_t const buffer_size = 4 * LEGION_MAX_RETURN_SIZE - 8;
 #else
-  static const size_t buffer_size = 1024 * 1024 - 8;
+  static size_t const buffer_size = 1024 * 1024 - 8;
 #endif
   size_t total_bytes;
   char data[buffer_size];
@@ -279,7 +279,7 @@ private:
 
   mutable std::unordered_map<size_t, float> cached_graph_costs;
   mutable std::unordered_map<size_t,
-                             std::unique_ptr<const std::vector<MachineView>>>
+                             std::unique_ptr<std::vector<MachineView> const>>
       cached_operator_valid_views;
 };
 
@@ -332,6 +332,8 @@ public:
                           std::vector<Legion::PhysicalRegion> const &regions,
                           Legion::Context ctx,
                           Legion::Runtime *runtime);
+  // static GraphOptimalViewSerialized
+  //     graph_optimize_wrapper(FFModel * model);
   Node find_bottleneck_node(Node const &sink_node,
                             Node const &source_node) const;
   void print_strategy_computation_graph(

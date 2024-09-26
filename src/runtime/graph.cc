@@ -71,7 +71,7 @@ using FlexFlow::MachineView;
 Legion::Logger log_graph("graph");
 Legion::Logger log_simplify("graph_simplify");
 
-const Node Node::INVALID_NODE = Node();
+Node const Node::INVALID_NODE = Node();
 
 Node::Node(void) : guid(0), ptr(NULL) {}
 
@@ -1899,6 +1899,7 @@ namespace {
 std::pair<std::unique_ptr<Graph>, std::unordered_map<Node, MachineView>>
     try_one_lambda(std::pair<float, MemorySearchResult> &lambda,
                    Task const *task,
+                   //  FFModel *model,
                    std::shared_ptr<Simulator> &cached_simulator,
                    bool perform_memory_search) {
   // Create a new fresh model
@@ -1916,6 +1917,76 @@ std::pair<std::unique_ptr<Graph>, std::unordered_map<Node, MachineView>>
                                     model->config.workersPerNode,
                                     model->config.cpusPerNode,
                                     model->all_valid_views);
+  // <<<<<<< HEAD
+  if (model->config.only_data_parallel) {
+    Graph *graph = new Graph(model);
+    graph->print_dot();
+    std::unordered_map<FlexFlow::Op const *, Node> op_to_node_map;
+    for (FlexFlow::Op const *dstOp : model->operators) {
+      Node dstNode;
+      dstNode.ptr = dstOp;
+      dstNode.guid = model->node_global_guid++;
+      op_to_node_map[dstOp] = dstNode;
+      for (int j = 0; j < dstOp->numInputs; j++) {
+        FlexFlow::Op const *srcOp = dstOp->inputs[j]->owner_op;
+        assert(op_to_node_map.find(srcOp) != op_to_node_map.end());
+        Node srcNode = op_to_node_map[srcOp];
+        graph->add_edge(srcNode, dstNode, dstOp->inputs[j]->owner_idx, j);
+      }
+    }
+    graph->print_dot();
+    std::unique_ptr<Graph> curr_best_graph;
+    std::unordered_map<Node, MachineView> curr_optimal_views;
+    curr_best_graph = std::unique_ptr<Graph>(graph);
+    MachineView data_parallel_view;
+    data_parallel_view.device_type = MachineView::GPU;
+    data_parallel_view.ndims = 1;
+    data_parallel_view.dim[0] =
+        model->config.numNodes * model->config.workersPerNode;
+    data_parallel_view.stride[0] = 1;
+    data_parallel_view.start_device_id = 0;
+    // Currently assume a 1D machine view is needed
+    assert(model->config.data_parallelism_degree == 1 ||
+           model->config.tensor_parallelism_degree == 1);
+    int degree = model->config.data_parallelism_degree *
+                 model->config.tensor_parallelism_degree;
+    for (auto const &node : curr_best_graph->inEdges) {
+      Op const *op = node.first.ptr;
+      MachineView mv;
+      mv.device_type = MachineView::GPU;
+      mv.ndims = 1;
+      int total_parallel_degree = 1;
+      for (int i = 0; i < op->outputs[0]->num_dims; i++) {
+        total_parallel_degree *= op->outputs[0]->dims[i].degree;
+      }
+      mv.dim[0] = total_parallel_degree;
+      mv.stride[0] = 1;
+      mv.start_device_id = 0;
+      // std::cout << mv.start_device_id + degree - 1 << "\n";
+      // std::cout << model->config.numNodes << "\n";
+      // std::cout << model->config.workersPerNode << "\n";
+      // assert(false);
+      assert(mv.start_device_id + degree - 1 <
+             model->config.numNodes * model->config.workersPerNode);
+      curr_optimal_views[node.first] = mv;
+      for (int i = 0; i < node.first.ptr->numOutputs; i++) {
+        assert(node.first.ptr->outputs[i]->is_valid_machine_view(mv));
+      }
+    }
+    // for (auto const &node : curr_best_graph->inEdges) {
+    //   curr_optimal_views[node.first] = data_parallel_view;
+    // }
+    return std::make_pair(std::move(curr_best_graph), curr_optimal_views);
+  }
+
+  //   Runtime *runtime = model->config.lg_hlr;
+  //   Context ctx = model->config.lg_ctx;
+  //   Task const *task = runtime->get_current_task(ctx);
+  //   Memory gpu_mem = Machine::MemoryQuery(Machine::get_machine())
+  //                        .only_kind(Memory::GPU_FB_MEM)
+  //                        .best_affinity_to(task->target_proc)
+  //                        .first();
+  // =======
   Memory gpu_mem = get_proc_mem(Machine::get_machine(), task->target_proc);
   MachineModel *machine;
   if (model->config.machine_model_version == 0) {
@@ -1949,6 +2020,16 @@ std::pair<std::unique_ptr<Graph>, std::unordered_map<Node, MachineView>>
   std::unique_ptr<Graph> curr_best_graph;
   std::unordered_map<Node, MachineView> curr_optimal_views;
 
+  // <<<<<<< HEAD
+  //   // Main step to optimize the PCG of an FFModel
+  //   model->graph_optimize(model->config.search_budget,
+  //                         model->config.only_data_parallel,
+  //                         curr_best_graph,
+  //                         curr_optimal_views,
+  //                         perform_memory_search,
+  //                         MemoryOptimConfig{lambda.first},
+  //                         lambda.second);
+  // =======
   if (model->config.only_data_parallel) {
     Graph *graph = new Graph(model);
     std::unordered_map<FlexFlow::Op const *, Node> op_to_node_map;
@@ -2104,11 +2185,18 @@ bool is_valid_strategy(
  * @param runtime Not used
  * @return GraphOptimalViewSerialized Serialized optimal PCG
  */
+
 GraphOptimalViewSerialized
     Graph::graph_optimize_task(Task const *task,
                                std::vector<PhysicalRegion> const &regions,
                                Context ctx,
                                Runtime *runtime) {
+  // FFModel *model = *((FFModel **)task->args);
+  //   return Graph::graph_optimize_wrapper(model);
+  // }
+
+  // /*static*/
+  // GraphOptimalViewSerialized Graph::graph_optimize_wrapper(FFModel *model) {
   auto model_config = (*((FFModel **)task->args))->config;
   bool perform_memory_search = model_config.perform_memory_search;
   float memory_threshold = model_config.device_mem;
@@ -2422,6 +2510,13 @@ GraphOptimalViewSerialized
         sez.serialize(reduction->name, strlen(reduction->name));
         break;
       }
+      case OP_ALLREDUCE: {
+        AllReduce *allreduce = (AllReduce *)op;
+        sez.serialize(allreduce->allreduce_dim);
+        sez.serialize(strlen(allreduce->name));
+        sez.serialize(allreduce->name, strlen(allreduce->name));
+        break;
+      }
       case OP_COMBINE: {
         Combine *combine = (Combine *)op;
         sez.serialize(combine->combine_dim);
@@ -2430,13 +2525,13 @@ GraphOptimalViewSerialized
         sez.serialize(combine->name, strlen(combine->name));
         break;
       }
-      case OP_ALLREDUCE: {
-        AllReduce *allreduce = (AllReduce *)op;
-        sez.serialize(allreduce->allreduce_dim);
-        sez.serialize(strlen(allreduce->name));
-        sez.serialize(allreduce->name, strlen(allreduce->name));
-        break;
-      }
+      // case OP_ALLREDUCE: {
+      //   AllReduce *allreduce = (AllReduce *)op;
+      //   sez.serialize(allreduce->allreduce_dim);
+      //   sez.serialize(strlen(allreduce->name));
+      //   sez.serialize(allreduce->name, strlen(allreduce->name));
+      //   break;
+      // }
       case OP_PARALLEL_IDENTITY: {
         ParallelIdentity *parallel_identity = (ParallelIdentity *)op;
         sez.serialize(parallel_identity->parallel_identity_dim);
@@ -3140,6 +3235,17 @@ void FFModel::deserialize_graph_optimal_view(
         node = get_or_create_node<ParallelIdentity>(inputs[0], params);
         break;
       }
+      // case OP_ALLREDUCE: {
+      //   assert(num_inputs == 1);
+      //   int allreduce_dim;
+      //   dez.deserialize(allreduce_dim);
+      //   size_t name_len;
+      //   char name[MAX_OPNAME] = {0};
+      //   dez.deserialize(name_len);
+      //   dez.deserialize(name, name_len);
+      //   node = get_or_create_node<AllReduce>(inputs[0], {allreduce_dim});
+      //   break;
+      // }
       case OP_FUSED_PARALLEL: {
         assert(num_inputs == 1);
         FusedParallelOpParams params;

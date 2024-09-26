@@ -1,0 +1,5 @@
+changes:
+cudnnSetTensorDescriptorFromDomain4SoftMax
+try_one_lambda in grpah.cc
+
+field_space = runtime->create_field_space(lg_ctx in model.cc

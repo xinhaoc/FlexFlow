@@ -33,6 +33,7 @@ SoftmaxMeta::SoftmaxMeta(FFHandler handler,
   checkCUDNN(cudnnSetTensorDescriptorFromDomain4SoftMax(
       outputTensor, input_domain, softmax->data_type));
   dim = softmax->dim;
+  last_layer = softmax->last_layer;
   profiling = softmax->profiling;
   inference_debugging = softmax->inference_debugging;
   std::strcpy(op_name, softmax->name);
@@ -78,7 +79,9 @@ void forward_kernel_wrapper(SoftmaxMeta const *m,
 
 void backward_kernel_wrapper(SoftmaxMeta const *m,
                              GenericTensorAccessorW const &input_grad,
-                             GenericTensorAccessorR const &output_grad) {
+                             GenericTensorAccessorR const &output_grad,
+                             GenericTensorAccessorR const &outputs,
+                             size_t num_elements) {
   hipStream_t stream;
   checkCUDA(get_legion_stream(&stream));
 
@@ -93,12 +96,14 @@ void backward_kernel_wrapper(SoftmaxMeta const *m,
     Internal::backward_kernel(m,
                               input_grad.get_float_ptr(),
                               output_grad.get_float_ptr(),
+                              outputs.get_float_ptr(),
                               output_grad.domain.get_volume(),
                               stream);
   } else if (m->output_type[0] == DT_HALF) {
     Internal::backward_kernel(m,
                               input_grad.get_half_ptr(),
                               output_grad.get_half_ptr(),
+                              outputs.get_half_ptr(),
                               output_grad.domain.get_volume(),
                               stream);
   } else {
@@ -250,124 +255,142 @@ template <typename DT>
 void backward_kernel(SoftmaxMeta const *m,
                      DT *input_grad_ptr,
                      DT const *output_grad_ptr,
+                     DT const *output_ptr,
                      size_t num_elements,
                      hipStream_t stream) {
-  checkCUDA(hipMemcpyAsync(input_grad_ptr,
-                           output_grad_ptr,
-                           num_elements * sizeof(DT),
-                           hipMemcpyDeviceToDevice,
-                           stream));
-}
+  if (m->last_layer) {
+    checkCUDA(hipMemcpyAsync(input_grad_ptr,
+                             output_grad_ptr,
+                             num_elements * sizeof(float),
+                             hipMemcpyDeviceToDevice,
+                             stream));
+  } else {
+    float alpha = 1.0f, beta = 0.0f;
+    checkCUDNN(miopenSoftmaxBackward_V2(m->handle.dnn,
+                                        &alpha,
+                                        m->inputTensor,
+                                        output_ptr,
+                                        m->inputTensor,
+                                        output_grad_ptr,
+                                        &beta,
+                                        m->inputTensor,
+                                        input_grad_ptr,
+                                        MIOPEN_SOFTMAX_ACCURATE,
+                                        MIOPEN_SOFTMAX_MODE_CHANNEL));
+  }
 
-template <typename DT>
-void inference_kernel(SoftmaxMeta const *m,
-                      BatchConfig const *bc,
-                      DT const *input_ptr,
-                      DT *output_ptr,
-                      int num_classes,
-                      hipStream_t stream) {
-  checkCUDNN(miopenSetStream(m->handle.dnn, stream));
+  template <typename DT>
+  void inference_kernel(SoftmaxMeta const *m,
+                        BatchConfig const *bc,
+                        DT const *input_ptr,
+                        DT *output_ptr,
+                        int num_classes,
+                        hipStream_t stream) {
+    checkCUDNN(miopenSetStream(m->handle.dnn, stream));
 
-  float alpha = 1.0f, beta = 0.0f;
-  miopenDataType_t cudnn_data_type = ff_to_cudnn_datatype(m->output_type[0]);
-  checkCUDNN(miopenSet4dTensorDescriptor(m->outputTensor,
-                                         cudnn_data_type,
-                                         bc->num_active_tokens(),
-                                         num_classes,
-                                         1,
-                                         1));
-  checkCUDNN(miopenSoftmaxForward_V2(m->handle.dnn,
-                                     &alpha,
-                                     m->outputTensor,
-                                     input_ptr,
-                                     &beta,
-                                     m->outputTensor,
-                                     output_ptr,
-                                     MIOPEN_SOFTMAX_ACCURATE,
-                                     MIOPEN_SOFTMAX_MODE_CHANNEL));
-}
+    float alpha = 1.0f, beta = 0.0f;
+    miopenDataType_t cudnn_data_type = ff_to_cudnn_datatype(m->output_type[0]);
+    checkCUDNN(miopenSet4dTensorDescriptor(m->outputTensor,
+                                           cudnn_data_type,
+                                           bc->num_active_tokens(),
+                                           num_classes,
+                                           1,
+                                           1));
+    checkCUDNN(miopenSoftmaxForward_V2(m->handle.dnn,
+                                       &alpha,
+                                       m->outputTensor,
+                                       input_ptr,
+                                       &beta,
+                                       m->outputTensor,
+                                       output_ptr,
+                                       MIOPEN_SOFTMAX_ACCURATE,
+                                       MIOPEN_SOFTMAX_MODE_CHANNEL));
+  }
 
-template <typename DT>
-__global__ void sparse_categorical_crossentropy_loss_peft_backward(
-    DT *input_grad,
-    DT const *output_grad,
-    BatchConfig::TokenId const *token_ids,
-    int num_tokens,
-    int num_classes) {
-  CUDA_KERNEL_LOOP(i, num_tokens * num_classes) {
-    int class_idx = i % num_classes;
-    int token_idx = i / num_classes;
-    input_grad[i] = output_grad[i];
-    if (class_idx == token_ids[token_idx]) {
-      input_grad[i] = input_grad[i] - (DT)1.0f;
+  template <typename DT>
+  __global__ void sparse_categorical_crossentropy_loss_peft_backward(
+      DT * input_grad,
+      DT const *output_grad,
+      BatchConfig::TokenId const *token_ids,
+      int num_tokens,
+      int num_classes) {
+    CUDA_KERNEL_LOOP(i, num_tokens * num_classes) {
+      int class_idx = i % num_classes;
+      int token_idx = i / num_classes;
+      input_grad[i] = output_grad[i];
+      if (class_idx == token_ids[token_idx]) {
+        input_grad[i] = input_grad[i] - (DT)1.0f;
+      }
     }
   }
-}
 
-template <typename DT>
-void peft_bwd_kernel(SoftmaxMeta const *m,
-                     BatchConfig const *bc,
-                     DT *input_grad_ptr,
-                     DT const *output_grad_ptr,
-                     int num_classes,
-                     hipStream_t stream) {
-  BatchConfig::TokenId token_ids[BatchConfig::MAX_NUM_TOKENS];
-  int tokens_previous_requests = 0;
-  for (int i = 0; i < bc->max_requests_per_batch(); i++) {
-    if (bc->request_completed[i]) {
-      continue;
-    }
-    // Skip non-PEFT requests
-    if (!bc->requestsInfo[i].peft_bwd) {
-      tokens_previous_requests += bc->requestsInfo[i].num_tokens_in_batch;
-      continue;
-    }
-    int num_bwd_tokens = bc->requestsInfo[i].num_tokens_in_batch - 1;
-    // shift labels by 1 position to the left (ignore first token label)
-    for (int j = 0; j < num_bwd_tokens; j++) {
-      token_ids[j] = bc->tokensInfo[j + tokens_previous_requests + 1].token_id;
-    }
+  template <typename DT>
+  void peft_bwd_kernel(SoftmaxMeta const *m,
+                       BatchConfig const *bc,
+                       DT *input_grad_ptr,
+                       DT const *output_grad_ptr,
+                       int num_classes,
+                       hipStream_t stream) {
+    BatchConfig::TokenId token_ids[BatchConfig::MAX_NUM_TOKENS];
+    int tokens_previous_requests = 0;
+    for (int i = 0; i < bc->max_requests_per_batch(); i++) {
+      if (bc->request_completed[i]) {
+        continue;
+      }
+      // Skip non-PEFT requests
+      if (!bc->requestsInfo[i].peft_bwd) {
+        tokens_previous_requests += bc->requestsInfo[i].num_tokens_in_batch;
+        continue;
+      }
+      int num_bwd_tokens = bc->requestsInfo[i].num_tokens_in_batch - 1;
+      // shift labels by 1 position to the left (ignore first token label)
+      for (int j = 0; j < num_bwd_tokens; j++) {
+        token_ids[j] =
+            bc->tokensInfo[j + tokens_previous_requests + 1].token_id;
+      }
 
-    DT scale_factor = 1.0 / (bc->requestsInfo[i].num_tokens_in_batch - 1);
-    // ignore last token
-    checkCUDA(hipMemsetAsync(input_grad_ptr +
-                                 (tokens_previous_requests +
-                                  bc->requestsInfo[i].num_tokens_in_batch - 1) *
-                                     num_classes,
-                             0,
-                             num_classes * sizeof(DT),
-                             stream));
-    checkCUDA(hipMemcpyAsync(m->handle.workSpace,
-                             token_ids,
-                             sizeof(BatchConfig::TokenId) * num_bwd_tokens,
-                             hipMemcpyHostToDevice,
-                             stream));
-    hipLaunchKernelGGL(
-        HIP_KERNEL_NAME(sparse_categorical_crossentropy_loss_peft_backward<DT>),
-        GET_BLOCKS(num_bwd_tokens * num_classes),
-        CUDA_NUM_THREADS,
-        0,
-        stream,
-        input_grad_ptr + tokens_previous_requests * num_classes,
-        output_grad_ptr + tokens_previous_requests * num_classes,
-        static_cast<BatchConfig::TokenId const *>(m->handle.workSpace),
-        num_bwd_tokens,
-        num_classes);
-    // scale
-    hipLaunchKernelGGL(HIP_KERNEL_NAME(scale_kernel<DT>),
-                       GET_BLOCKS(num_bwd_tokens * num_classes),
-                       CUDA_NUM_THREADS,
-                       0,
-                       stream,
-                       input_grad_ptr + tokens_previous_requests * num_classes,
-                       num_bwd_tokens * num_classes,
-                       DT(0.0),
-                       scale_factor);
+      DT scale_factor = 1.0 / (bc->requestsInfo[i].num_tokens_in_batch - 1);
+      // ignore last token
+      checkCUDA(hipMemsetAsync(
+          input_grad_ptr + (tokens_previous_requests +
+                            bc->requestsInfo[i].num_tokens_in_batch - 1) *
+                               num_classes,
+          0,
+          num_classes * sizeof(DT),
+          stream));
+      checkCUDA(hipMemcpyAsync(m->handle.workSpace,
+                               token_ids,
+                               sizeof(BatchConfig::TokenId) * num_bwd_tokens,
+                               hipMemcpyHostToDevice,
+                               stream));
+      hipLaunchKernelGGL(
+          HIP_KERNEL_NAME(
+              sparse_categorical_crossentropy_loss_peft_backward<DT>),
+          GET_BLOCKS(num_bwd_tokens * num_classes),
+          CUDA_NUM_THREADS,
+          0,
+          stream,
+          input_grad_ptr + tokens_previous_requests * num_classes,
+          output_grad_ptr + tokens_previous_requests * num_classes,
+          static_cast<BatchConfig::TokenId const *>(m->handle.workSpace),
+          num_bwd_tokens,
+          num_classes);
+      // scale
+      hipLaunchKernelGGL(HIP_KERNEL_NAME(scale_kernel<DT>),
+                         GET_BLOCKS(num_bwd_tokens * num_classes),
+                         CUDA_NUM_THREADS,
+                         0,
+                         stream,
+                         input_grad_ptr +
+                             tokens_previous_requests * num_classes,
+                         num_bwd_tokens * num_classes,
+                         DT(0.0),
+                         scale_factor);
 
-    tokens_previous_requests += num_bwd_tokens + 1;
+      tokens_previous_requests += num_bwd_tokens + 1;
+    }
+    assert(tokens_previous_requests == bc->num_active_tokens());
   }
-  assert(tokens_previous_requests == bc->num_active_tokens());
-}
 
 } // namespace Internal
 } // namespace Softmax

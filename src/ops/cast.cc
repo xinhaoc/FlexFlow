@@ -38,7 +38,7 @@ using Legion::Task;
 using Legion::TaskArgument;
 using Legion::TaskLauncher;
 
-Tensor FFModel::cast(const Tensor input, DataType dtype, char const *name) {
+Tensor FFModel::cast(Tensor const input, DataType dtype, char const *name) {
   Layer *cast = new Layer(this,
                           OP_CAST,
                           dtype,
@@ -316,6 +316,7 @@ void Cast::forward_task(Task const *task,
 }
 
 void Cast::backward(FFModel const &ff) {
+
   ArgumentMap argmap;
   Context ctx = ff.config.lg_ctx;
   Runtime *runtime = ff.config.lg_hlr;

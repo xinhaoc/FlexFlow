@@ -17,8 +17,8 @@ public:
   ElementBinary(FFModel &model,
                 LayerID const &layer_guid,
                 OperatorType type,
-                const ParallelTensor x,
-                const ParallelTensor y,
+                ParallelTensor const x,
+                ParallelTensor const y,
                 bool inplace_a,
                 char const *name);
   ElementBinary(FFModel &model,
@@ -78,6 +78,7 @@ public:
 public:
   bool inplace_a, has_same_operands;
   bool broadcast_input1, broadcast_input2;
+  int batch_size;
 };
 
 }; // namespace FlexFlow

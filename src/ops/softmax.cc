@@ -49,6 +49,7 @@ void Softmax::serialize(Legion::Serializer &sez) const {
   sez.serialize(this->layer_guid.model_id);
   sez.serialize(this->dim);
   sez.serialize(strlen(this->name));
+  sez.serialize(this->last_layer);
   sez.serialize(this->name, strlen(this->name));
 }
 
@@ -68,12 +69,17 @@ Node Softmax::deserialize(FFModel &ff,
   dez.deserialize(dim);
   size_t name_len;
   char name[MAX_OPNAME] = {0};
+
+  bool last_layer;
+
   dez.deserialize(name_len);
+  dez.deserialize(last_layer);
   dez.deserialize(name, name_len);
 
   SoftmaxParams params;
   params.layer_guid = layer_guid;
   params.dim = dim;
+  params.last_layer = last_layer;
   strcpy(params.name, name);
   return ff.get_or_create_node<Softmax>(inputs[0], params);
 }
@@ -92,8 +98,9 @@ SoftmaxParams Softmax::get_params() const {
   return params;
 }
 
-Tensor FFModel::softmax(const Tensor _input,
+Tensor FFModel::softmax(Tensor const _input,
                         int dim,
+                        bool last_layer,
                         DataType data_type,
                         char const *name) {
   if (data_type == DT_NONE) {
@@ -115,6 +122,8 @@ Tensor FFModel::softmax(const Tensor _input,
   sm->outputs[0] = create_tensor_legion_ordering(
       numdims, dims, data_type, sm, 0, true /*create_grad*/);
   sm->add_int_property("softmax_dim", dim);
+
+  sm->add_int_property("last_layer", last_layer);
   layers.push_back(sm);
   return sm->outputs[0];
 }
@@ -126,17 +135,21 @@ Op *Softmax::create_operator_from_layer(
   long long value;
   layer->get_int_property("softmax_dim", value);
   int dim = (int)value;
+  layer->get_int_property("last_layer", value);
+  bool last_layer = (bool)value;
   return new Softmax(model,
                      layer->layer_guid,
                      inputs[0],
                      (inputs[0]->num_dims - 1 - dim) % inputs[0]->num_dims,
+                     last_layer,
                      layer->name);
 }
 
 Softmax::Softmax(FFModel &model,
                  LayerID const &_layer_guid,
-                 const ParallelTensor _input,
+                 ParallelTensor const _input,
                  int _dim,
+                 bool _last_layer,
                  char const *name)
     : Op(model,
          OP_SOFTMAX,
@@ -146,7 +159,7 @@ Softmax::Softmax(FFModel &model,
          0 /*weights*/,
          1 /*outputs*/,
          _input),
-      dim(_dim) {
+      dim(_dim), last_layer(_last_layer) {
   // Currently assume we always perform softmax along the inner most dim
   assert(dim == 0);
   layer_guid = _layer_guid;
@@ -160,9 +173,14 @@ Softmax::Softmax(FFModel &model,
 
 Softmax::Softmax(FFModel &model,
                  SoftmaxParams const &params,
-                 const ParallelTensor input,
+                 ParallelTensor const input,
                  char const *name)
-    : Softmax(model, params.layer_guid, input, params.dim, params.name) {}
+    : Softmax(model,
+              params.layer_guid,
+              input,
+              params.dim,
+              params.last_layer,
+              name) {}
 
 void Softmax::init_inference(FFModel const &ff,
                              std::vector<ParallelTensor> const &batch_inputs,
@@ -346,6 +364,13 @@ void Softmax::backward(FFModel const &ff) {
                                                     EXCLUSIVE,
                                                     outputs[0]->region_grad));
   launcher.add_field(1, FID_DATA);
+
+  launcher.add_region_requirement(RegionRequirement(outputs[0]->part,
+                                                    0 /*projection id*/,
+                                                    READ_ONLY,
+                                                    EXCLUSIVE,
+                                                    outputs[0]->region));
+  launcher.add_field(2, FID_DATA);
   runtime->execute_index_space(ctx, launcher);
 }
 
@@ -360,7 +385,10 @@ void Softmax::backward_task(Task const *task,
       m->input_type[0], regions[0], task->regions[0], FID_DATA, ctx, runtime);
   GenericTensorAccessorR output_grad = helperGetGenericTensorAccessorRO(
       m->output_type[0], regions[1], task->regions[1], FID_DATA, ctx, runtime);
-  backward_kernel_wrapper(m, input_grad, output_grad);
+  GenericTensorAccessorR outputs = helperGetGenericTensorAccessorRO(
+      m->output_type[0], regions[2], task->regions[2], FID_DATA, ctx, runtime);
+  backward_kernel_wrapper(
+      m, input_grad, output_grad, outputs, outputs.domain.get_volume());
 }
 
 FutureMap Softmax::inference(FFModel const &ff,
@@ -571,13 +599,22 @@ bool Softmax::measure_operator_cost(Simulator *sim,
 
     float *output_grad_ptr =
         (float *)sim->allocate(sub_output.get_volume(), DT_FLOAT);
-    GenericTensorAccessorW output_grad_acc(
+    GenericTensorAccessorR output_grad_acc(
         DT_FLOAT, sub_output.get_domain(), output_grad_ptr);
     assert(output_grad_ptr != NULL);
+    float *output_ptr =
+        (float *)sim->allocate(sub_output.get_volume(), DT_FLOAT);
+    GenericTensorAccessorR output_acc(
+        DT_FLOAT, sub_output.get_domain(), output_ptr);
     cost_metrics.outputs_memory +=
         cost_metrics.total_mem_diff_from(sim->offset);
+
     backward = [&] {
-      backward_kernel_wrapper(m, input_grad_acc, output_grad_acc);
+      backward_kernel_wrapper(m,
+                              input_grad_acc,
+                              output_grad_acc,
+                              output_acc,
+                              sub_output.get_volume());
     };
   }
 
@@ -610,6 +647,7 @@ size_t hash<FlexFlow::SoftmaxParams>::operator()(
   size_t key = 0;
   hash_combine(key, params.layer_guid.id);
   hash_combine(key, params.dim);
+  hash_combine(key, params.last_layer);
   return key;
 }
 }; // namespace std

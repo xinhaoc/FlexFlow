@@ -127,6 +127,8 @@ void flexflow_model_compute_metrics(flexflow_model_t handle);
 
 void flexflow_model_update(flexflow_model_t handle);
 
+void flexflow_model_unified_update(flexflow_model_t handle);
+
 void flexflow_model_compile(flexflow_model_t handle,
                             enum LossType loss_type,
                             int *metrics,
@@ -344,6 +346,7 @@ flexflow_tensor_t flexflow_model_add_gather(flexflow_model_t handle,
 flexflow_tensor_t flexflow_model_add_softmax(flexflow_model_t handle,
                                              const flexflow_tensor_t input,
                                              int dim,
+                                             bool last_layer,
                                              char const *name);
 
 flexflow_tensor_t flexflow_model_add_transpose(flexflow_model_t handle,

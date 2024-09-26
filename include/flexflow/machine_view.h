@@ -16,7 +16,7 @@ namespace FlexFlow {
 class FFConfig;
 
 struct MachineView {
-  static const MachineView NO_VIEW;
+  static MachineView const NO_VIEW;
   MachineView();
 
   int get_device_id(Legion::DomainPoint const &p) const;

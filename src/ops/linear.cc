@@ -33,7 +33,7 @@ using namespace FlexFlow::Kernels::Linear;
 static constexpr int KERNEL_IDX = 0;
 static constexpr int BIAS_IDX = 1;
 
-Tensor FFModel::dense(const Tensor input,
+Tensor FFModel::dense(Tensor const input,
                       int outDim,
                       ActiMode activation,
                       bool use_bias,
@@ -157,7 +157,7 @@ Op *Linear::create_operator_from_layer(
 
 Linear::Linear(FFModel &model,
                Linear const &other,
-               const ParallelTensor input,
+               ParallelTensor const input,
                bool allocate_weights)
     : Linear(model,
              other.layer_guid,
@@ -194,7 +194,7 @@ Linear::Linear(FFModel &model,
 
 Linear::Linear(FFModel &model,
                LayerID const &_layer_guid,
-               const ParallelTensor _input,
+               ParallelTensor const _input,
                int out_dim,
                ActiMode _activation,
                RegularizerMode _kernel_reg_type,
@@ -231,6 +231,23 @@ Linear::Linear(FFModel &model,
   LinearParams params = this->get_params();
   params.construct_mappings(*this->parallel_dims_mapping, input_shape);
   params.solve_dims(input_shape, output_shape, kernel_shape, bias_shape);
+  kernel_shape.dims[0].size = this->in_channels;
+  bias_shape.dims[0].degree = _input->dims[_input->num_dims - 1].degree;
+  bias_shape.dims[0].parallel_idx =
+      _input->dims[_input->num_dims - 1].parallel_idx;
+  bias_shape.dims[1].size = bias_shape.dims[1].degree = 1;
+  bias_shape.dims[1].parallel_idx = -1;
+  bias_shape.dims[bias_shape.num_dims - 1].size =
+      bias_shape.dims[bias_shape.num_dims - 1].degree = 1;
+  for (int i = 0; i < input_shape.num_dims - 1; i++) {
+    if (_input->dims[i].degree > 1) {
+      bias_shape.dims[bias_shape.num_dims - 1].size *= _input->dims[i].degree;
+      bias_shape.dims[bias_shape.num_dims - 1].degree *= _input->dims[i].degree;
+      bias_shape.dims[bias_shape.num_dims - 1].parallel_idx =
+          _input->dims[i].parallel_idx;
+    }
+  }
+
   kernel_shape.dims[0].size = this->in_channels;
   bias_shape.dims[0].degree = _input->dims[_input->num_dims - 1].degree;
   bias_shape.dims[0].parallel_idx =
@@ -854,7 +871,15 @@ void Linear::forward_task_with_dim(Task const *task,
   int out_dim = acc_output.rect.hi[0] - acc_output.rect.lo[0] + 1;
   int batch_size = acc_output.rect.volume() / out_dim;
   assert(acc_output.rect.volume() == static_cast<size_t>(out_dim * batch_size));
-  assert(acc_input.rect.volume() == static_cast<size_t>(in_dim * batch_size));
+  // assert(acc_input.rect.volume() == static_cast<size_t>(in_dim *
+  // batch_size));
+  assert(acc_kernel.rect.volume() == static_cast<size_t>(in_dim * out_dim));
+  //   float const *acc_bias_ptr = NULL;
+  //   if (m->use_bias) {
+  //     TensorAccessorR<float, NDIM> acc_bias(
+  // =======
+  //   assert(acc_input.rect.volume() == static_cast<size_t>(in_dim *
+  //   batch_size));
   // assert(acc_kernel.rect.volume() == static_cast<size_t>(in_dim * out_dim));
   DT const *acc_bias_ptr = nullptr;
   if (m->use_bias &&
@@ -1056,18 +1081,25 @@ void Linear::backward_task_with_dim(Task const *task,
          static_cast<size_t>(in_dim * out_dim));
   DT *acc_bias_grad_ptr = nullptr;
   if (m->use_bias) {
-    TensorAccessorW<DT, 3> acc_bias_grad(regions[rid],
-                                         task->regions[rid],
-                                         FID_DATA,
-                                         ctx,
-                                         runtime,
-                                         true /*readOutput*/);
+    // <<<<<<< HEAD
+    TensorAccessorW<DT, NDIM> acc_bias_grad(regions[rid],
+                                            task->regions[rid],
+                                            FID_DATA,
+                                            ctx,
+                                            runtime,
+                                            true /*readOutput*/);
+    // =======
+    // TensorAccessorW<DT, 3> acc_bias_grad(regions[rid],
+    //                                      task->regions[rid],
+    //                                      FID_DATA,
+    //                                      ctx,
+    //                                      runtime,
+    //                                      true /*readOutput*/);
     rid++;
     assert(acc_bias_grad.rect.volume() == static_cast<size_t>(out_dim));
     acc_bias_grad_ptr = static_cast<DT *>(acc_bias_grad.ptr);
   }
   assert(rid == regions.size());
-
   backward_kernel_wrapper(m,
                           acc_input.ptr,
                           input_grad,
@@ -1464,7 +1496,7 @@ bool LinearParams::is_valid(ParallelTensorShape const &input_shape) const {
  * It takes a the input tensor as a parameter, instead of the input's
  * ParallelTensorShape.
  */
-void LinearParams::solve_dims(const ParallelTensor input,
+void LinearParams::solve_dims(ParallelTensor const input,
                               ParallelDim output_dims[MAX_TENSOR_DIM],
                               int *output_ndims,
                               ParallelDim kernel_dims[MAX_TENSOR_DIM],

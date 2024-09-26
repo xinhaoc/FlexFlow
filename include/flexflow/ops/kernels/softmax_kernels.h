@@ -23,6 +23,8 @@ public:
   bool profiling;
   bool inference_debugging;
   int dim;
+  bool last_layer;
+  char op_name[MAX_OPNAME];
 };
 
 namespace Kernels {
@@ -34,7 +36,12 @@ void forward_kernel_wrapper(SoftmaxMeta const *m,
 
 void backward_kernel_wrapper(SoftmaxMeta const *m,
                              GenericTensorAccessorW const &input_grad,
-                             GenericTensorAccessorR const &output_grad);
+                             GenericTensorAccessorR const &output_grad,
+                             GenericTensorAccessorR const &outputs,
+                             size_t num_elements);
+//  float *input_grad_ptr,
+//  float const *output_grad_ptr,
+//  float const *output_ptr,
 
 void inference_kernel_wrapper(SoftmaxMeta const *m,
                               BatchConfig const *bc,
@@ -54,11 +61,11 @@ void forward_kernel(SoftmaxMeta const *m,
                     DT const *input_ptr,
                     DT *output_ptr,
                     ffStream_t stream);
-
 template <typename DT>
 void backward_kernel(SoftmaxMeta const *m,
                      DT *input_grad_ptr,
                      DT const *output_grad_ptr,
+                     DT const *output_ptr,
                      size_t num_elements,
                      ffStream_t stream);
 

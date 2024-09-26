@@ -18,7 +18,7 @@ public:
             bool allocate_weights = false);
   LayerNorm(FFModel &model,
             LayerID const &_layer_guid,
-            const ParallelTensor _input,
+            ParallelTensor const _input,
             std::vector<int> const &axes,
             bool _elementwise_affine,
             bool _use_bias,
@@ -148,6 +148,7 @@ public:
   int64_t effective_batch_size, effective_num_elements;
   float eps;
   void *mean_ptr, *rstd_ptr, *ds_ptr, *db_ptr, *scale_ptr, *bias_ptr;
+  char op_name[MAX_OPNAME];
   Realm::RegionInstance reserveInst;
   // PEFT related fields
   void *input_activation;

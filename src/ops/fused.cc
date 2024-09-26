@@ -232,7 +232,9 @@ bool FusedOp::add_operator(
   assert(!op->is_parallel_op() || op->op_type == OP_ALLREDUCE ||
          op->op_type == OP_PARALLEL_IDENTITY);
   // Currently don't consider nested fusion
-  assert(op->op_type != OP_FUSED);
+  if (op->op_type == OP_FUSED) {
+    return false;
+  }
   MachineView my_view = outputs[0]->machine_view;
   MachineView op_view = op->outputs[0]->machine_view;
   if (my_view == op_view) {

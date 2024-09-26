@@ -23,6 +23,9 @@ public:
   OperatorType op_type;
   bool inplace_a, has_same_operands;
   bool broadcast_input1, broadcast_input2;
+  int batch_size;
+  size_t replicate_size;
+  char op_name[MAX_OPNAME];
 };
 
 namespace Kernels {

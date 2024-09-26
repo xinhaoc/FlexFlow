@@ -32,6 +32,7 @@ SoftmaxMeta::SoftmaxMeta(FFHandler handler,
   checkCUDNN(cudnnSetTensorDescriptorFromDomain4SoftMax(
       outputTensor, input_domain, softmax->data_type));
   dim = softmax->dim;
+  last_layer = softmax->last_layer;
   profiling = softmax->profiling;
   inference_debugging = softmax->inference_debugging;
   std::strcpy(op_name, softmax->name);
@@ -77,7 +78,9 @@ void forward_kernel_wrapper(SoftmaxMeta const *m,
 
 void backward_kernel_wrapper(SoftmaxMeta const *m,
                              GenericTensorAccessorW const &input_grad,
-                             GenericTensorAccessorR const &output_grad) {
+                             GenericTensorAccessorR const &output_grad,
+                             GenericTensorAccessorR const &outputs,
+                             size_t num_elements) {
   cudaStream_t stream;
   checkCUDA(get_legion_stream(&stream));
 
@@ -92,12 +95,14 @@ void backward_kernel_wrapper(SoftmaxMeta const *m,
     Internal::backward_kernel(m,
                               input_grad.get_float_ptr(),
                               output_grad.get_float_ptr(),
+                              outputs.get_float_ptr(),
                               output_grad.domain.get_volume(),
                               stream);
   } else if (m->output_type[0] == DT_HALF) {
     Internal::backward_kernel(m,
                               input_grad.get_half_ptr(),
                               output_grad.get_half_ptr(),
+                              outputs.get_half_ptr(),
                               output_grad.domain.get_volume(),
                               stream);
   } else {
@@ -249,13 +254,30 @@ template <typename DT>
 void backward_kernel(SoftmaxMeta const *m,
                      DT *input_grad_ptr,
                      DT const *output_grad_ptr,
+                     DT const *output_ptr,
                      size_t num_elements,
                      cudaStream_t stream) {
-  checkCUDA(cudaMemcpyAsync(input_grad_ptr,
-                            output_grad_ptr,
-                            num_elements * sizeof(DT),
-                            cudaMemcpyDeviceToDevice,
-                            stream));
+
+  if (m->last_layer) {
+    checkCUDA(cudaMemcpyAsync(input_grad_ptr,
+                              output_grad_ptr,
+                              num_elements * sizeof(float),
+                              cudaMemcpyDeviceToDevice,
+                              stream));
+  } else {
+    float alpha = 1.0f, beta = 0.0f;
+    checkCUDNN(cudnnSoftmaxBackward(m->handle.dnn,
+                                    CUDNN_SOFTMAX_ACCURATE,
+                                    CUDNN_SOFTMAX_MODE_CHANNEL,
+                                    &alpha,
+                                    m->inputTensor,
+                                    output_ptr,
+                                    m->inputTensor,
+                                    output_grad_ptr,
+                                    &beta,
+                                    m->inputTensor,
+                                    input_grad_ptr));
+  }
 }
 
 template <typename DT>

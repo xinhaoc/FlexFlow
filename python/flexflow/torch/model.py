@@ -1,4 +1,4 @@
-# Copyright 2023 CMU, Facebook, LANL, MIT, NVIDIA, and Stanford (alphabetical)
+# Copyright 2020 Stanford University, Los Alamos National Laboratory
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 from collections import OrderedDict
 from enum import Enum
 from typing import List
-import copy
 
 import numpy as np
 from flexflow.core.flexflow_cffi import Tensor, NormInitializer
@@ -26,6 +25,7 @@ from flexflow.type import (ActiMode, AggrMode, DataType, OpType,
 
 try:
     import torch
+    print(torch.__version__)
     from torch.fx.immutable_collections import immutable_dict
 except:
     pass
@@ -653,14 +653,26 @@ class LayerNormNode(ModuleNode):
         data = Node.StringData(string)
         name = data.name
         input_tensor = node_to_output[data.innodes[0]]
-        return ffmodel.identity(input=input_tensor, name=name)
-        # TODO: Change to ffmodel.layernorm() once supported
+        axes = [len(input_tensor.dims) - 1]
+        return ffmodel.layer_norm(
+            input=input_tensor,
+            axes=axes,
+            elementwise_affine=True,
+            eps=1e-6,
+            name=name,
+        )
 
     def to_ff(self, ffmodel, node_to_output):
         input_tensor = node_to_output[self.innodes[0].name]
-        return ffmodel.identity(input=input_tensor, name=self.name)
-        # TODO: Change to ffmodel.layernorm() once supported
-
+        axes = [0]
+        eps = self.module.eps
+        return ffmodel.layer_norm(
+            input=input_tensor,
+            axes=axes,
+            elementwise_affine=True,
+            eps=eps,
+            name=self.name,
+        )
 
 class T5LayerNormNode(Node):
     """
@@ -931,7 +943,7 @@ class FunctionNode(Node):
         elif name.find("contiguous") >= 0: return ContiguousNode(node)
         elif name.find("tanh") >= 0: return TanhFNode(node)
         elif name.find("gelu") >= 0: return GeluFNode(node)
-        assert 0, f"Unknown function or method: {name}"
+        assert 0, f"Unknown function or method: {name} {node}"
 
     @staticmethod
     def is_right_scalar_op(node):
@@ -1186,16 +1198,24 @@ class ScalarSubNode(FunctionNode):
         input_tensor = node_to_output[data.innodes[0]]
         scalar = float(data.items[4])
         return ffmodel.scalar_sub(
-            input=input_tensor, scalar=scalar, name=name,
+            input=input_tensor, scalar=scalar, inplace=False, name=name,
         )
 
     def to_ff(self, ffmodel, node_to_output):
         input_tensor, scalar = \
             FunctionNode.parse_scalar_op(self, node_to_output)
-        return ffmodel.scalar_sub(
-            input=input_tensor, scalar=scalar, name=self.name,
-        )
-
+        if self.scalar_pos == FunctionNode.ScalarPosition.RIGHT:
+            return ffmodel.scalar_sub(
+                input=input_tensor, scalar=scalar, inplace=False, name=self.name,
+            )
+        else: 
+            negative_input = ffmodel.scalar_multiply(
+                input=input_tensor, scalar=-1, inplace=False, name=self.name + '_negative',
+            )
+            return ffmodel.scalar_sub(
+                input=negative_input, scalar=-scalar, inplace=False, name=self.name,
+            )
+        
 
 class ScalarTrueDivNode(FunctionNode):
     def __init__(self, node):
@@ -1220,15 +1240,16 @@ class ScalarTrueDivNode(FunctionNode):
         input_tensor = node_to_output[data.innodes[0]]
         scalar = float(data.items[4])
         return ffmodel.scalar_true_divide(
-            input=input_tensor, scalar=scalar, name=name,
+            input=input_tensor, scalar=scalar, inplace=False, name=name,
         )
 
     def to_ff(self, ffmodel, node_to_output):
         input_tensor = node_to_output[self.innodes[0].name]
         scalar = self.innodes[1]
         assert type(scalar) is float
+        
         return ffmodel.scalar_true_divide(
-            input=input_tensor, scalar=scalar, name=self.name,
+            input=input_tensor, scalar=scalar, inplace=False, name=self.name,
         )
 
 
@@ -1409,6 +1430,10 @@ class GetItemNode(FunctionNode):
 
     @staticmethod
     def slice_tensor(ffmodel, tensor, slices, name):
+
+        print('slices', slices)
+        old_shape = tensor.dims
+        print('old_shape', tensor.dims)
         """Returns a reshaped tensor based on the given slices."""
         def is_colon(slice_elem):
             """Returns if the slice is equivalent to `:`."""
@@ -1424,11 +1449,20 @@ class GetItemNode(FunctionNode):
             stop = old_size if slice_elem.stop == None else slice_elem.stop
             new_size = stop - start
             return new_size < old_size
-        
+
         def is_single_element(slice_elem):
             return isinstance(slice_elem, int)
 
+        def is_exact(slice_elem, old_size):
+            if slice_elem is None:
+                return False
+            start = 0 if slice_elem.start == None else slice_elem.start
+            stop = old_size if slice_elem.stop == None else slice_elem.stop
+            new_size = stop - start
+            return new_size == old_size
+
         shape = tensor.dims
+        print('input dims', tensor.dims)
 
         # Fewer slices than input dimensions
         diff = len(shape) - len(slices)
@@ -1441,12 +1475,18 @@ class GetItemNode(FunctionNode):
         # Match dimensions from right to left                                                                  
         new_shape = []  # append then reverse                                                                  
         j = len(shape) - 1
+        import copy
         curr_tensor = copy.copy(tensor)
 
         for slice_elem in reversed(slices):
-            if is_colon(slice_elem):
+            print('slice_elem', slice_elem)
+            if is_colon(slice_elem) or is_exact(slice_elem, shape[j]):
+                print('shape', shape)
                 assert j >= 0
+                print('j', j)
+                print('new_shape_bef', new_shape)
                 new_shape.append(shape[j])
+                print('new_shape_aft', new_shape)
                 j -= 1
             elif is_unsqueeze(slice_elem):
                 new_shape.append(1)
@@ -1456,6 +1496,8 @@ class GetItemNode(FunctionNode):
                 curr_tensor = ffmodel.split(input=curr_tensor, sizes=splits, axis=j, name=name)[0]
                 new_shape.append(1)
                 j -= 1
+            elif is_exact(slice_elem, shape[j]):
+                print('exact')
             elif is_truncate(slice_elem, shape[j]):
                 assert j >= 0
                 start = 0 if slice_elem.start == None else slice_elem.start
@@ -1481,8 +1523,45 @@ class GetItemNode(FunctionNode):
                 assert 0, f"Unsupported slice element: {slice_elem}"
 
         new_shape.reverse()
-        return ffmodel.reshape(input=curr_tensor, shape=new_shape, name=name,)
-            
+        if len(new_shape) == 0:
+            return curr_tensor
+        else:
+            print('new_shape', new_shape)
+            if old_shape == new_shape:
+                return curr_tensor
+            return ffmodel.reshape(input=curr_tensor, shape=new_shape, name=name,)
+        
+        
+        
+#        """Returns a reshaped tensor based on the given slices."""
+#        def is_colon(slice_elem):
+#            """Returns if the slice is equivalent to `:`."""
+#            return slice_elem == slice(None, None, None)
+#
+#        def is_unsqueeze(slice_elem):
+#            """Returns if the slice is equivalent to unsqueezing that
+#            dimension."""
+#            return slice_elem is None
+#        shape = tensor.dims
+#        # Match dimensions from right to left
+#        new_shape = []  # append then reverse
+#        j = len(shape) - 1
+#        for slice_elem in reversed(slices):
+#            if is_colon(slice_elem):
+#                assert j >= 0
+#                new_shape.append(shape[j])
+#                j -= 1
+#            elif is_unsqueeze(slice_elem):
+#                new_shape.append(1)
+#            else:
+#                assert 0, f"Unsupported slice element: {slice_elem}"
+#        new_shape.reverse()
+#        return ffmodel.reshape(
+#            input=tensor, shape=new_shape, name=name,
+#        )
+
+
+
     @staticmethod
     def strings_to_slices(strings: List[str]):
         # Extract slice elements
@@ -1583,14 +1662,14 @@ class ScalarMulNode(FunctionNode):
         input_tensor = node_to_output[data.innodes[0]]
         scalar = float(data.items[4])
         return ffmodel.scalar_multiply(
-            input=input_tensor, scalar=scalar, name=name,
+            input=input_tensor, scalar=scalar, inplace=False, name=name,
         )
 
     def to_ff(self, ffmodel, node_to_output):
         input_tensor, scalar = \
             FunctionNode.parse_scalar_op(self, node_to_output)
         return ffmodel.scalar_multiply(
-            input=input_tensor, scalar=scalar, name=self.name,
+            input=input_tensor, scalar=scalar, inplace=False, name=self.name,
         )
 
 
@@ -1751,7 +1830,7 @@ class ScalarFloorDivNode(FunctionNode):
     def parse(self):
         s = [self.name]
         scalar = self.innodes[1]
-        if type(scalar) is not int or type(scalar) is not float:
+        if not isinstance(scalar, [int, float]):
             assert 0, "FlexFlow does not support tensor floor division"
         innodes = (self.innodes[0],)
         s.append(self.parse_inoutnodes(innodes))
@@ -2290,11 +2369,16 @@ class AttributeNode(Node):
             "since attributes require access to the PyTorch model"
         )
 
-    def to_ff(self, ffmodel, node_to_output):
-        return self.attr_to_ff_tensor(ffmodel)
+    def to_ff(self, ffmodel, node_to_output, input_tensors):
+        return self.attr_to_ff_tensor(ffmodel, input_tensors)
 
-    def attr_to_ff_tensor(self, ffmodel):
-        torch_tensor = self.attr
+    def attr_to_ff_tensor(self, ffmodel, input_tensors):
+
+
+        torch_tensor = self.attr       
+        assert (torch_tensor.shape[0] == 1)
+        batch_size = ffmodel._ffconfig.batch_size
+        torch_tensor = np.repeat(torch_tensor, batch_size, axis=0)
         ff_dtype = Node.torch_to_ff_dtype(torch_tensor.dtype)
 
         requires_grad = torch_tensor.requires_grad
@@ -2309,14 +2393,17 @@ class AttributeNode(Node):
             ff_dtype = DataType.DT_FLOAT
             np_tensor = np_tensor.astype(np.float32)
 
+        print('attr: ', torch_tensor.shape)
+        assert (torch_tensor.shape[0] == batch_size)        
         ff_tensor = ffmodel.create_tensor(
-            torch_tensor.shape, ff_dtype, requires_grad,
+            torch_tensor.shape, ff_dtype, True,
         )
         # delay set_tensor, add to ffmodel
         ffmodel.attr_tensors[ff_tensor] = np_tensor
         # ff_tensor.set_tensor(
         #     ffmodel, np_tensor
         # )
+        input_tensors.append(ff_tensor)
         return ff_tensor
 
 
@@ -2398,7 +2485,7 @@ class OutputNode(Node):
                     # `CrossEntropyLoss()` implementation
                     logits = node_to_output[other["logits"].name]
                     softmax_logits = ffmodel.softmax(
-                        input=logits, name=self.name,
+                        input=logits, last_layer=True, name=self.name,
                     )
                     output_tensors[:] += [softmax_logits]
             else:
@@ -2440,6 +2527,11 @@ class PyTorchModel():
                     batch_size=self.batch_size,
                     sequence_length=self.seq_length,
                 )
+        
+            #import pickle
+            #with open('symbolic_trace', 'rb') as f:
+                #traced = pickle.load(f)
+
         else:
             traced = torch.fx.symbolic_trace(self.model)
 
@@ -2527,6 +2619,8 @@ class PyTorchModel():
             elif isinstance(node, OutputNode):
                 node.to_ff(ffmodel, node_to_output, output_tensors)
                 node_output = None
+            elif isinstance(node, AttributeNode):
+                node_output = node.to_ff(ffmodel, node_to_output, input_tensors)
             else:
                 node_output = node.to_ff(ffmodel, node_to_output)
 

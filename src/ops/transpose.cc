@@ -57,7 +57,7 @@ TransposeParams Transpose::get_params() const {
   return params;
 }
 
-Tensor FFModel::transpose(const Tensor input,
+Tensor FFModel::transpose(Tensor const input,
                           std::vector<int> const &_perm,
                           char const *name) {
   Layer *transpose = new Layer(this,
@@ -99,12 +99,12 @@ Op *Transpose::create_operator_from_layer(
 
 Transpose::Transpose(FFModel &model,
                      TransposeParams const &params,
-                     const ParallelTensor input,
+                     ParallelTensor const input,
                      char const *name)
     : Transpose(model, input, params.perm, params.name) {}
 
 Transpose::Transpose(FFModel &model,
-                     const ParallelTensor input,
+                     ParallelTensor const input,
                      std::vector<int> const &_perm,
                      char const *name)
     : Op(model,
